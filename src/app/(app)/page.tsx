@@ -1,6 +1,6 @@
 export default function Home() {
   return (
-    <main className="flex min-h-full flex-col items-center justify-center px-4">
+    <div className="flex min-h-screen flex-col items-center justify-center px-8 py-12">
       <div className="max-w-2xl text-center space-y-6">
         <h1 className="text-5xl font-bold tracking-tight sm:text-6xl">
           Open{" "}
@@ -45,6 +45,6 @@ export default function Home() {
           ))}
         </div>
       </div>
-    </main>
+    </div>
   );
 }
