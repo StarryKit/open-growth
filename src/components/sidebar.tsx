@@ -50,7 +50,6 @@ export function Sidebar({ initialProjects, initialActiveProject }: SidebarProps)
   const [isSwitcherOpen, setIsSwitcherOpen] = useState(false);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [projectName, setProjectName] = useState("");
-  const [rootDir, setRootDir] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
@@ -97,7 +96,7 @@ export function Sidebar({ initialProjects, initialActiveProject }: SidebarProps)
         const response = await fetch("/api/projects", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: projectName, rootDir }),
+          body: JSON.stringify({ name: projectName }),
         });
 
         if (!response.ok) {
@@ -109,7 +108,6 @@ export function Sidebar({ initialProjects, initialActiveProject }: SidebarProps)
         setProjects((currentProjects) => [...currentProjects, data.project]);
         setActiveProject(data.project);
         setProjectName("");
-        setRootDir("");
         setIsDialogOpen(false);
         setIsSwitcherOpen(false);
         router.refresh();
@@ -170,9 +168,6 @@ export function Sidebar({ initialProjects, initialActiveProject }: SidebarProps)
                       >
                         <span className="min-w-0 flex-1">
                           <span className="block truncate font-medium">{project.name}</span>
-                          <span className="block truncate text-xs text-slate-500">
-                            {project.rootDir}
-                          </span>
                         </span>
                         {isActive ? <Check aria-hidden="true" className="size-4 text-emerald-300" /> : null}
                       </button>
@@ -268,18 +263,6 @@ export function Sidebar({ initialProjects, initialActiveProject }: SidebarProps)
                   required
                   type="text"
                   value={projectName}
-                />
-              </label>
-
-              <label className="block">
-                <span className="text-sm font-medium text-slate-200">Root directory path</span>
-                <input
-                  className="mt-2 h-11 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 font-mono text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-cyan-300 focus:ring-4 focus:ring-cyan-300/10"
-                  onChange={(event) => setRootDir(event.target.value)}
-                  placeholder="/absolute/path/to/project"
-                  required
-                  type="text"
-                  value={rootDir}
                 />
               </label>
 

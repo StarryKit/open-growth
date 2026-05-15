@@ -1,5 +1,3 @@
-import { promises as fs } from "node:fs";
-import path from "node:path";
 import { createProject, deleteProject, listProjects } from "@/lib/project-store";
 
 export const runtime = "nodejs";
@@ -21,27 +19,15 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = (await request.json().catch(() => null)) as
-      | { name?: string; rootDir?: string }
+      | { name?: string }
       | null;
 
     if (!body?.name?.trim()) {
       return badRequest("Project name is required.");
     }
 
-    if (!body?.rootDir?.trim()) {
-      return badRequest("Root directory is required.");
-    }
-
-    const rootDir = path.resolve(body.rootDir.trim());
-
-    if (!path.isAbsolute(body.rootDir.trim())) {
-      return badRequest("Root directory must be an absolute path.");
-    }
-
-    await fs.mkdir(rootDir, { recursive: true });
     const project = await createProject({
       name: body.name,
-      rootDir,
     });
 
     return Response.json({ project }, { status: 201 });

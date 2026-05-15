@@ -1,6 +1,10 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import { randomUUID } from "node:crypto";
+
+/** All workspace projects live under ~/.open-growth/ */
+export const WORKSPACE_ROOT = path.join(os.homedir(), ".open-growth");
 
 export type WorkspaceProject = {
   id: string;
@@ -8,6 +12,16 @@ export type WorkspaceProject = {
   rootDir: string;
   createdAt: string;
 };
+
+/** Compute the project directory from its name. */
+export function getWorkspaceDir(name: string): string {
+  const slug = name
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9-]/g, "");
+  return path.join(WORKSPACE_ROOT, slug || "untitled");
+}
 
 type ProjectStore = {
   projects: WorkspaceProject[];
@@ -115,11 +129,15 @@ export async function getActiveProject(): Promise<WorkspaceProject | null> {
   return projects.find((project) => project.id === activeProjectId) ?? null;
 }
 
-export async function createProject(input: { name: string; rootDir: string }) {
+export async function createProject(input: { name: string }) {
+  const rootDir = getWorkspaceDir(input.name);
+
+  await fs.mkdir(rootDir, { recursive: true });
+
   const project: WorkspaceProject = {
     id: randomUUID(),
     name: input.name.trim(),
-    rootDir: path.resolve(input.rootDir.trim()),
+    rootDir,
     createdAt: new Date().toISOString(),
   };
 
