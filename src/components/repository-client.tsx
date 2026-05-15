@@ -11,9 +11,11 @@ import {
   UploadCloud,
 } from "lucide-react";
 import type { ContentAsset } from "@/lib/content-assets";
+import type { WorkspaceProject } from "@/lib/project-store";
 
 type RepositoryClientProps = {
   initialAssets: ContentAsset[];
+  activeProject: WorkspaceProject | null;
 };
 
 type UploadResponse = {
@@ -81,7 +83,7 @@ function AssetPreview({ asset }: { asset: ContentAsset }) {
   );
 }
 
-export function RepositoryClient({ initialAssets }: RepositoryClientProps) {
+export function RepositoryClient({ initialAssets, activeProject }: RepositoryClientProps) {
   const [assets, setAssets] = useState<ContentAsset[]>(initialAssets);
   const [isDragging, setIsDragging] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -197,6 +199,19 @@ export function RepositoryClient({ initialAssets }: RepositoryClientProps) {
           </div>
           <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm shadow-sm dark:border-slate-800 dark:bg-slate-900">
             <span className="font-semibold">{assets.length}</span> stored assets
+            <div className="mt-1 max-w-[18rem] truncate text-xs text-slate-500 dark:text-slate-400">
+              {activeProject ? (
+                <>
+                  <span className="font-medium text-slate-700 dark:text-slate-200">
+                    {activeProject.name}
+                  </span>
+                  <span className="mx-1">·</span>
+                  <span className="truncate">{activeProject.rootDir}</span>
+                </>
+              ) : (
+                "Default content directory"
+              )}
+            </div>
           </div>
         </div>
       </header>
