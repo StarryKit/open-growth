@@ -40,7 +40,7 @@ async function readRequestFile(request: NextRequest) {
   }
 
   const safeFilename = sanitizeFilename(filename);
-  const filePath = getContentFilePath(safeFilename);
+  const filePath = await getContentFilePath(safeFilename);
   const stats = await fs.stat(filePath);
   const extension = extname(safeFilename).toLowerCase();
   const stream = createReadStream(filePath);
@@ -75,7 +75,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: Request) {
   try {
-    await ensureContentDirectory();
+    const contentDirectory = await ensureContentDirectory();
 
     const formData = await request.formData();
     const uploadedFile = formData.get("file");
@@ -88,8 +88,8 @@ export async function POST(request: Request) {
       return badRequest("Unsupported file type.");
     }
 
-    const filename = await createUniqueFilename(uploadedFile.name);
-    const filePath = getContentFilePath(filename);
+    const filename = await createUniqueFilename(uploadedFile.name, contentDirectory);
+    const filePath = await getContentFilePath(filename, contentDirectory);
     const arrayBuffer = await uploadedFile.arrayBuffer();
 
     await fs.writeFile(filePath, Buffer.from(arrayBuffer));
@@ -113,7 +113,8 @@ export async function DELETE(request: NextRequest) {
   }
 
   try {
-    await fs.unlink(getContentFilePath(filename));
+    const filePath = await getContentFilePath(filename);
+    await fs.unlink(filePath);
     return Response.json({ success: true });
   } catch (error) {
     if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {

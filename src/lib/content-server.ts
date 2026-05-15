@@ -2,13 +2,25 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import type { ContentAsset } from "@/lib/content-assets";
 import { getAssetType, isSupportedAsset } from "@/lib/content-assets";
+import { getActiveProject } from "@/lib/project-store";
 
-export const contentDirectory = path.resolve(process.cwd(), "content");
-
+const fallbackContentDirectory = path.join(process.cwd(), "content");
 const textPreviewLimit = 900;
 
-export async function ensureContentDirectory() {
-  await fs.mkdir(contentDirectory, { recursive: true });
+export async function getContentDirectory(): Promise<string> {
+  const activeProject = await getActiveProject();
+
+  if (!activeProject) {
+    return fallbackContentDirectory;
+  }
+
+  return path.join(activeProject.rootDir, "content");
+}
+
+export async function ensureContentDirectory(contentDirectory?: string) {
+  const directory = contentDirectory ?? (await getContentDirectory());
+  await fs.mkdir(directory, { recursive: true });
+  return directory;
 }
 
 export function sanitizeFilename(filename: string): string {
@@ -22,22 +34,28 @@ export function sanitizeFilename(filename: string): string {
   return `${safeBase || "asset"}${safeExtension}`;
 }
 
-export function getContentFilePath(filename: string): string {
+export async function getContentFilePath(
+  filename: string,
+  contentDirectory?: string,
+): Promise<string> {
   const safeFilename = sanitizeFilename(filename);
-  return path.join(contentDirectory, safeFilename);
+  const directory = contentDirectory ?? (await getContentDirectory());
+  return path.join(directory, safeFilename);
 }
 
-export async function createUniqueFilename(filename: string): Promise<string> {
+export async function createUniqueFilename(
+  filename: string,
+  contentDirectory?: string,
+): Promise<string> {
   const safeFilename = sanitizeFilename(filename);
   const parsedName = path.parse(safeFilename);
+  const directory = await ensureContentDirectory(contentDirectory);
   let candidate = safeFilename;
   let index = 1;
 
-  await ensureContentDirectory();
-
   while (true) {
     try {
-      await fs.access(path.join(contentDirectory, candidate));
+      await fs.access(path.join(directory, candidate));
       candidate = `${parsedName.name}-${index}${parsedName.ext}`;
       index += 1;
     } catch {
@@ -46,8 +64,11 @@ export async function createUniqueFilename(filename: string): Promise<string> {
   }
 }
 
-async function readTextPreview(filename: string): Promise<string | undefined> {
-  const filePath = getContentFilePath(filename);
+async function readTextPreview(
+  filename: string,
+  contentDirectory: string,
+): Promise<string | undefined> {
+  const filePath = await getContentFilePath(filename, contentDirectory);
   const content = await fs.readFile(filePath, "utf8");
   const previewLines = content
     .slice(0, textPreviewLimit)
@@ -57,10 +78,10 @@ async function readTextPreview(filename: string): Promise<string | undefined> {
   return previewLines.join("\n");
 }
 
-export async function listContentAssets(): Promise<ContentAsset[]> {
-  await ensureContentDirectory();
+export async function listContentAssets(contentDirectory?: string): Promise<ContentAsset[]> {
+  const directory = await ensureContentDirectory(contentDirectory);
 
-  const directoryEntries = await fs.readdir(contentDirectory, {
+  const directoryEntries = await fs.readdir(directory, {
     withFileTypes: true,
   });
 
@@ -69,7 +90,8 @@ export async function listContentAssets(): Promise<ContentAsset[]> {
       .filter((entry) => entry.isFile() && isSupportedAsset(entry.name))
       .map(async (entry) => {
         const filename = entry.name;
-        const stats = await fs.stat(getContentFilePath(filename));
+        const filePath = await getContentFilePath(filename, directory);
+        const stats = await fs.stat(filePath);
         const type = getAssetType(filename);
 
         return {
@@ -78,7 +100,7 @@ export async function listContentAssets(): Promise<ContentAsset[]> {
           type,
           size: stats.size,
           updatedAt: stats.mtime.toISOString(),
-          preview: type === "text" ? await readTextPreview(filename) : undefined,
+          preview: type === "text" ? await readTextPreview(filename, directory) : undefined,
         } satisfies ContentAsset;
       }),
   );
