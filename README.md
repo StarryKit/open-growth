@@ -83,7 +83,7 @@ open-growth/
 
 ## 🤝 Contributing
 
-Started by [Haichao](https://github.com/Mine77). Issues and PRs welcome.
+Started by [Mine77](https://github.com/Mine77). Issues and PRs welcome.
 
 ---
 
