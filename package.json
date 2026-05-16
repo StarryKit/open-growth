@@ -2,26 +2,49 @@
   "name": "open-growth",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "eslint"
+    "dev": "concurrently -k \"npm run dev --workspace @open-growth/web\" \"npm run dev --workspace @open-growth/api\"",
+    "build": "npm run build --workspace @open-growth/web && npm run build --workspace @open-growth/api",
+    "start": "npm run start --workspace @open-growth/api",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write .",
+    "typecheck": "npm run typecheck --workspace @open-growth/web && npm run typecheck --workspace @open-growth/api",
+    "test": "npm run test --workspace @open-growth/web && npm run test --workspace @open-growth/api",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
+    "@fastify/cors": "^11.1.0",
+    "@fastify/multipart": "^9.3.0",
+    "@fastify/static": "^8.2.0",
+    "fastify": "^5.3.3",
     "lucide-react": "^1.16.0",
-    "next": "16.2.6",
     "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "react-router-dom": "^7.5.3"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.4.3",
+    "@vitejs/plugin-react": "^5.1.4",
+    "@playwright/test": "^1.55.0",
     "@tailwindcss/postcss": "^4",
+    "@testing-library/jest-dom": "^6.8.0",
+    "@testing-library/react": "^16.3.0",
+    "@testing-library/user-event": "^14.6.1",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "eslint": "^9",
-    "eslint-config-next": "16.2.6",
+    "concurrently": "^9.1.2",
+    "jsdom": "^26.1.0",
     "tailwindcss": "^4",
+    "tsx": "^4.20.6",
+    "vite": "^6.3.5",
+    "vitest": "^3.2.4",
     "typescript": "^5"
   }
 }

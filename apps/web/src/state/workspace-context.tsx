@@ -1,0 +1,83 @@
+import type { WorkspaceProject } from "@shared";
+import type { ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useState } from "react";
+
+type WorkspaceState = {
+  projects: WorkspaceProject[];
+  activeProject: WorkspaceProject | null;
+  loading: boolean;
+  reloadWorkspace: () => Promise<void>;
+  setWorkspace: (next: {
+    projects: WorkspaceProject[];
+    activeProject: WorkspaceProject | null;
+  }) => void;
+};
+
+const WorkspaceContext = createContext<WorkspaceState | null>(null);
+
+async function fetchWorkspace() {
+  const response = await fetch("/api/projects", { cache: "no-store" });
+
+  if (!response.ok) {
+    throw new Error("Failed to load workspace.");
+  }
+
+  return (await response.json()) as {
+    projects: WorkspaceProject[];
+    activeProject: WorkspaceProject | null;
+  };
+}
+
+export function WorkspaceProvider({ children }: { children: ReactNode }) {
+  const [projects, setProjects] = useState<WorkspaceProject[]>([]);
+  const [activeProject, setActiveProject] = useState<WorkspaceProject | null>(
+    null,
+  );
+  const [loading, setLoading] = useState(true);
+
+  const reloadWorkspace = async () => {
+    setLoading(true);
+
+    try {
+      const data = await fetchWorkspace();
+      setProjects(data.projects);
+      setActiveProject(data.activeProject);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void reloadWorkspace();
+  }, []);
+
+  const value = useMemo<WorkspaceState>(
+    () => ({
+      projects,
+      activeProject,
+      loading,
+      reloadWorkspace,
+      setWorkspace: (next) => {
+        setProjects(next.projects);
+        setActiveProject(next.activeProject);
+      },
+    }),
+    [activeProject, loading, projects],
+  );
+
+  return (
+    <WorkspaceContext.Provider value={value}>
+      {children}
+    </WorkspaceContext.Provider>
+  );
+}
+
+export function useWorkspace() {
+  const context = useContext(WorkspaceContext);
+
+  if (!context) {
+    throw new Error("useWorkspace must be used within WorkspaceProvider.");
+  }
+
+  return context;
+}
