@@ -2,7 +2,6 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import { AuthProvider } from "@/state/auth-context";
-import { WorkspaceProvider } from "@/state/workspace-context";
 import { App } from "@/ui/app";
 import "@/styles/globals.css";
 
@@ -16,9 +15,7 @@ createRoot(container).render(
   <StrictMode>
     <BrowserRouter>
       <AuthProvider>
-        <WorkspaceProvider>
-          <App />
-        </WorkspaceProvider>
+        <App />
       </AuthProvider>
     </BrowserRouter>
   </StrictMode>,

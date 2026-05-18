@@ -9,7 +9,10 @@ type AuthState = {
   session: Session | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<void>;
+  signInWithGoogle: () => Promise<void>;
   signUp: (email: string, password: string) => Promise<void>;
+  verifySignUpOtp: (email: string, token: string) => Promise<void>;
+  resendSignUpCode: (email: string) => Promise<void>;
   signOut: () => Promise<void>;
   accessToken: () => Promise<string | null>;
 };
@@ -25,6 +28,10 @@ const supabase =
   supabaseUrl && supabaseAnonKey
     ? createClient(supabaseUrl, supabaseAnonKey)
     : null;
+
+function authRedirectUrl() {
+  return `${window.location.origin}/`;
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
@@ -68,9 +75,45 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         });
         if (error) throw error;
       },
+      signInWithGoogle: async () => {
+        if (!supabase) return;
+        const { error } = await supabase.auth.signInWithOAuth({
+          provider: "google",
+          options: {
+            redirectTo: authRedirectUrl(),
+          },
+        });
+        if (error) throw error;
+      },
       signUp: async (email, password) => {
         if (!supabase) return;
-        const { error } = await supabase.auth.signUp({ email, password });
+        const { error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            emailRedirectTo: authRedirectUrl(),
+          },
+        });
+        if (error) throw error;
+      },
+      verifySignUpOtp: async (email, token) => {
+        if (!supabase) return;
+        const { error } = await supabase.auth.verifyOtp({
+          email,
+          token,
+          type: "signup",
+        });
+        if (error) throw error;
+      },
+      resendSignUpCode: async (email) => {
+        if (!supabase) return;
+        const { error } = await supabase.auth.resend({
+          email,
+          type: "signup",
+          options: {
+            emailRedirectTo: authRedirectUrl(),
+          },
+        });
         if (error) throw error;
       },
       signOut: async () => {
