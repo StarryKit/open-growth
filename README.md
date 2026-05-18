@@ -32,7 +32,6 @@ The broader workflow surface is already mapped out in the app, with dedicated en
 
 | Module | Description | Status |
 |------|------|------|
-| **Dashboard** | Workspace landing page and product overview | Available |
 | **Content Repository** | Upload, preview, and delete image, video, and text assets | Available |
 | **Workspace Projects** | Create projects, switch active projects, and isolate content directories | Available |
 | **Publish** | Reserved route for publishing workflows | Placeholder |

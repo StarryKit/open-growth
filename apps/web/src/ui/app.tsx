@@ -3,7 +3,6 @@ import { useAuth } from "@/state/auth-context";
 import { AppShell } from "@/ui/layout/app-shell";
 import { AuthPage } from "@/ui/pages/auth-page";
 import { ConnectorsPage } from "@/ui/pages/connectors-page";
-import { DashboardPage } from "@/ui/pages/dashboard-page";
 import { PublishPage } from "@/ui/pages/publish-page";
 import { RepositoryPage } from "@/ui/pages/repository-page";
 import { TrackingPage } from "@/ui/pages/tracking-page";
@@ -27,7 +26,7 @@ export function App() {
   return (
     <Routes>
       <Route element={<AppShell />}>
-        <Route index element={<DashboardPage />} />
+        <Route index element={<Navigate replace to="/connectors" />} />
         <Route path="connectors" element={<ConnectorsPage />} />
         <Route path="repository" element={<RepositoryPage />} />
         <Route path="publish" element={<PublishPage />} />

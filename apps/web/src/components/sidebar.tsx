@@ -6,7 +6,6 @@ import {
   Check,
   ChevronDown,
   Folder,
-  Home,
   Link2,
   Loader2,
   type LucideIcon,
@@ -33,7 +32,6 @@ type ProjectResponse = {
 };
 
 const navItems: NavItem[] = [
-  { label: "Dashboard", href: "/", icon: Home },
   { label: "Connectors", href: "/connectors", icon: Link2 },
   { label: "Content Repository", href: "/repository", icon: Folder },
   { label: "Publish", href: "/publish", icon: Send },
