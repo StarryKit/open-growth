@@ -23,11 +23,11 @@ Use Supabase as the durable boundary for all user data:
 
 Use a Supabase environment ladder for every runtime:
 
-- Local development: Supabase CLI stack, configured by `packages/db/config.toml` and `.env`.
+- Local development: Supabase CLI stack, configured by `packages/db/supabase/config.toml` and `.env`.
 - Pull request or QA testing: Supabase preview or persistent branches, configured by `.env`.
 - Production: the production Supabase project, configured only in the deployment provider.
 
-All schema changes must be represented as SQL migrations under `packages/db/migrations/`. Seed data for local development lives in `packages/db/seed.sql`.
+All schema changes must be represented as SQL migrations under `packages/db/supabase/migrations/`. Seed data for local development lives in `packages/db/supabase/seed.sql`.
 
 The application fails fast when required Supabase variables are absent.
 
@@ -35,7 +35,7 @@ The application fails fast when required Supabase variables are absent.
 
 - The local JSON store is not the product storage model and should not be restored as a runtime fallback.
 - Future connectors should write platform side effects through outbox processing rather than directly mutating business state in request handlers.
-- Schema changes must be expressed as migrations under `packages/db/migrations/`.
+- Schema changes must be expressed as migrations under `packages/db/supabase/migrations/`.
 - Developers can run `npm run db:start`, `npm run db:reset`, and `pnpm dev` to test against a local production-like stack.
 - Deployment and branch switching are environment-variable changes, not application-code changes.
 - RLS, Auth, Storage, and transactional RPC behavior are exercised during normal development.
@@ -46,7 +46,7 @@ The application fails fast when required Supabase variables are absent.
 - Define the core tables, enums, and RLS helpers in Supabase migrations.
 - Seed a private workspace and a demo project for local development.
 - Keep the Fastify API aligned with the shared domain model and the PRD workflow states.
-- Keep `packages/db/config.toml` aligned with app ports and local Auth redirect URLs.
+- Keep `packages/db/supabase/config.toml` aligned with app ports and local Auth redirect URLs.
 - Keep `.env.example` current when required Supabase variables change.
 - Keep `development.md` as the setup source of truth.
 - Prefer new migrations over editing applied migrations once remote environments exist.

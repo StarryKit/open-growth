@@ -752,7 +752,7 @@ API：
 
 ## 9. 实现约束
 
-1. Supabase schema 必须通过 `packages/db/migrations/` 管理，本地开发种子数据放在 `packages/db/seed.sql`。
+1. Supabase schema 必须通过 `packages/db/supabase/migrations/` 管理，本地开发种子数据放在 `packages/db/supabase/seed.sql`。
 2. Supabase Storage bucket、object path 和 signed URL 策略必须与 Workspace membership 对齐，object path 使用 `workspace_id/project_id/asset_id/original_filename`。
 3. Workspace 权限模型使用 owner role；团队邀请、admin/member UI 和复杂角色权限不属于本 PRD 范围。
 4. 结构化用户数据以 Supabase Postgres 为准；图片、视频和附件以 Supabase Storage 为主存储；Storage 与外部平台副作用通过 outbox、状态机、幂等 key 和补偿动作保证可恢复一致性。

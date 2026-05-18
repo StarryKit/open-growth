@@ -70,7 +70,7 @@ The seeded local login is:
 - Email: `local-dev@open-growth.test`
 - Password: `open-growth-local`
 
-Schema changes go in `packages/db/migrations/`. Create a new migration with:
+Schema changes go in `packages/db/supabase/migrations/`. Create a new migration with:
 
 ```bash
 npm run db:new your_migration_name
@@ -120,8 +120,8 @@ For production:
 
 If you need to test manually against any Supabase project:
 
-1. Apply migrations from `packages/db/migrations/`.
-2. Load `packages/db/seed.sql` only for non-production demo data.
+1. Apply migrations from `packages/db/supabase/migrations/`.
+2. Load `packages/db/supabase/seed.sql` only for non-production demo data.
 3. Create the `content-assets` storage bucket if migrations were not used.
 4. Put the Supabase URL, anon key, service role key, and any needed user id in an env file.
 5. Run the app with that env file.
