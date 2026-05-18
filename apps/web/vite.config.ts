@@ -5,22 +5,28 @@ import { defineConfig } from "vite";
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
 
-export default defineConfig({
-  plugins: [react()],
-  build: {
-    outDir: "../../dist/web",
-    emptyOutDir: true,
-  },
-  resolve: {
-    alias: {
-      "@": path.resolve(rootDir, "./src"),
-      "@shared": path.resolve(rootDir, "../../packages/shared/src/index.ts"),
+export default defineConfig(() => {
+  const repoRoot = path.resolve(rootDir, "../..");
+
+  return {
+    envDir: repoRoot,
+    plugins: [react()],
+    build: {
+      outDir: "../../dist/web",
+      emptyOutDir: true,
     },
-  },
-  server: {
-    port: 5173,
-    proxy: {
-      "/api": "http://localhost:3001",
+    resolve: {
+      alias: {
+        "@": path.resolve(rootDir, "./src"),
+        "@shared": path.resolve(rootDir, "../../packages/shared/src/index.ts"),
+      },
     },
-  },
+    server: {
+      host: "0.0.0.0",
+      port: 5173,
+      proxy: {
+        "/api": "http://localhost:3001",
+      },
+    },
+  };
 });

@@ -79,7 +79,9 @@ describe("ConnectorsPage", () => {
         name: /platform access, adapter limits/i,
       }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "X" })).toBeInTheDocument();
-    expect(screen.getByText("needs-auth")).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "X", level: 2 }),
+    ).toBeInTheDocument();
+    expect(await screen.findByText("needs-auth")).toBeInTheDocument();
   });
 });

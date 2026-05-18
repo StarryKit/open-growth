@@ -1,24 +1,3 @@
-import { randomUUID } from "node:crypto";
-import path from "node:path";
-import type {
-  ConnectorAccount,
-  ContentAsset,
-  EngagementMetrics,
-  EngagementOverview,
-  EngagementSnapshot,
-  GrowthPlatform,
-  PlatformPublishTarget,
-  PublishedContent,
-  TrendPost,
-  TrendQuery,
-  TrendRun,
-} from "../../../../packages/shared/src/index.js";
-import {
-  fetchEngagement,
-  mergeConnectorConnections,
-  publishContentToPlatform,
-  searchTrends,
-} from "./connector-service.js";
 import {
   createDatabaseResponseDraftFromTrendPost,
   deleteDatabaseContentAsset,
@@ -31,6 +10,7 @@ import {
   insertDatabasePublishedContent,
   insertDatabaseTrendQuery,
   insertDatabaseTrendRun,
+  isDatabaseStoreEnabled,
   listDatabaseConnectorAccounts,
   listDatabaseContentAssets,
   listDatabaseEngagementSnapshots,
@@ -47,39 +27,26 @@ import {
   updateDatabaseTrendPost,
   updateDatabaseTrendQuery,
   upsertDatabaseConnectorAccount,
-} from "./database-store.js";
-import { dataDirectory, readJsonFile, writeJsonFile } from "./json-store.js";
-import { getActiveProject } from "./project-store.js";
-
-type DomainData = {
-  contentAssets: ContentAsset[];
-  publishedContents: PublishedContent[];
-  engagementSnapshots: EngagementSnapshot[];
-  trendQueries: TrendQuery[];
-  trendRuns: TrendRun[];
-  trendPosts: TrendPost[];
-  connectorAccounts: ConnectorAccount[];
-  outboxEvents: OutboxEvent[];
-};
+} from "../../../../packages/db/src/database-store.js";
+import type {
+  ConnectorAccount,
+  ContentAsset,
+  EngagementMetrics,
+  EngagementOverview,
+  EngagementSnapshot,
+  GrowthPlatform,
+  PlatformPublishTarget,
+  PublishedContent,
+  TrendPost,
+  TrendQuery,
+} from "../../../../packages/shared/src/index.js";
+import {
+  fetchEngagement,
+  mergeConnectorConnections,
+  searchTrends,
+} from "./connector-service.js";
 
 export type DomainContext = StoreContext;
-
-type OutboxEvent = {
-  id: string;
-  eventType: string;
-  aggregateType: string;
-  aggregateId: string;
-  payload: Record<string, unknown>;
-  status: "pending" | "processing" | "succeeded" | "failed";
-  attempts: number;
-  idempotencyKey: string;
-  availableAt: string;
-  lastError?: string;
-  createdAt: string;
-  updatedAt: string;
-};
-
-const domainStorePath = path.join(dataDirectory, "open-growth-domain.json");
 
 const emptyMetrics: EngagementMetrics = {
   views: 0,
@@ -90,31 +57,22 @@ const emptyMetrics: EngagementMetrics = {
   clicks: 0,
 };
 
-const emptyDomainData: DomainData = {
-  contentAssets: [],
-  publishedContents: [],
-  engagementSnapshots: [],
-  trendQueries: [],
-  trendRuns: [],
-  trendPosts: [],
-  connectorAccounts: [],
-  outboxEvents: [],
-};
-
-async function loadDomainData(): Promise<DomainData> {
-  return readJsonFile(domainStorePath, emptyDomainData);
+function assertDatabaseStoreConfigured() {
+  if (!isDatabaseStoreEnabled()) {
+    throw new Error("Supabase database storage is not configured.");
+  }
 }
 
-async function saveDomainData(data: DomainData) {
-  await writeJsonFile(domainStorePath, data);
+function assertDatabaseResult<T>(value: T | null): T {
+  if (value === null) {
+    throw new Error("Supabase database scope is not configured.");
+  }
+
+  return value;
 }
 
 function now() {
   return new Date().toISOString();
-}
-
-function ensureArray<T>(value: T[] | undefined, fallback: T[] = []) {
-  return Array.isArray(value) ? value : fallback;
 }
 
 function sumMetrics(
@@ -140,63 +98,9 @@ function engagementRate(metrics: EngagementMetrics) {
   );
 }
 
-function normalizeProjectId(projectId: string | null | undefined) {
-  return projectId ?? null;
-}
-
-function activeProjectId() {
-  return getActiveProject().then((project) => project?.id ?? null);
-}
-
-function scopedProjectId(context?: DomainContext) {
-  return context?.activeProjectId ?? activeProjectId();
-}
-
-function makeAssetId() {
-  return `asset_${randomUUID()}`;
-}
-
-function makePublishedContentId() {
-  return `published_${randomUUID()}`;
-}
-
-function makeTrendQueryId() {
-  return `query_${randomUUID()}`;
-}
-
-function makeTrendRunId() {
-  return `run_${randomUUID()}`;
-}
-
-function makeTrendPostId() {
-  return `post_${randomUUID()}`;
-}
-
-function makeOutboxId() {
-  return `outbox_${randomUUID()}`;
-}
-
-function projectScope(
-  currentProjectId: string | null,
-  targetProjectId: string | null,
-) {
-  return currentProjectId === targetProjectId;
-}
-
 export async function listContentAssets(context?: DomainContext) {
-  const databaseAssets = await listDatabaseContentAssets(context);
-  if (databaseAssets) {
-    return databaseAssets;
-  }
-
-  const data = await loadDomainData();
-  const projectId = await scopedProjectId(context);
-
-  return data.contentAssets
-    .filter((asset) =>
-      projectScope(projectId, normalizeProjectId(asset.projectId)),
-    )
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  assertDatabaseStoreConfigured();
+  return assertDatabaseResult(await listDatabaseContentAssets(context));
 }
 
 export async function createContentAsset(
@@ -213,35 +117,8 @@ export async function createContentAsset(
   },
   context?: DomainContext,
 ) {
-  const databaseAsset = await insertDatabaseContentAsset(input, context);
-  if (databaseAsset) {
-    return databaseAsset;
-  }
-
-  const data = await loadDomainData();
-  const projectId = await scopedProjectId(context);
-  const timestamp = now();
-  const asset: ContentAsset = {
-    id: makeAssetId(),
-    projectId,
-    filename: input.filename,
-    path: input.path,
-    type: input.type,
-    size: input.size,
-    updatedAt: timestamp,
-    preview: input.preview,
-    title: input.filename,
-    description: "",
-    tags: [],
-    source: "upload",
-    platforms: ["x", "reddit", "hacker-news"],
-    status: "ready",
-    usageCount: 0,
-  };
-
-  data.contentAssets.push(asset);
-  await saveDomainData(data);
-  return asset;
+  assertDatabaseStoreConfigured();
+  return assertDatabaseResult(await insertDatabaseContentAsset(input, context));
 }
 
 export async function updateContentAsset(
@@ -254,116 +131,23 @@ export async function updateContentAsset(
   >,
   context?: DomainContext,
 ) {
-  const databaseAsset = await updateDatabaseContentAsset(
-    assetId,
-    patch,
-    context,
-  );
-  if (databaseAsset) {
-    return databaseAsset;
-  }
-
-  const data = await loadDomainData();
-  const asset = data.contentAssets.find(
-    (candidate) => candidate.id === assetId,
-  );
-
-  if (!asset) {
-    return null;
-  }
-
-  Object.assign(asset, patch, { updatedAt: now() });
-  await saveDomainData(data);
-  return asset;
+  assertDatabaseStoreConfigured();
+  return updateDatabaseContentAsset(assetId, patch, context);
 }
 
 export async function deleteContentAsset(
   assetId: string,
   context?: DomainContext,
 ) {
-  const databaseRemoved = await deleteDatabaseContentAsset(assetId, context);
-  if (databaseRemoved !== null) {
-    return databaseRemoved;
-  }
-
-  const data = await loadDomainData();
-  const before = data.contentAssets.length;
-  data.contentAssets = data.contentAssets.filter(
-    (asset) => asset.id !== assetId,
+  assertDatabaseStoreConfigured();
+  return assertDatabaseResult(
+    await deleteDatabaseContentAsset(assetId, context),
   );
-
-  if (data.contentAssets.length === before) {
-    return false;
-  }
-
-  await saveDomainData(data);
-  return true;
 }
 
 export async function listPublishedContent(context?: DomainContext) {
-  const databaseContents = await listDatabasePublishedContent(context);
-  if (databaseContents) {
-    return databaseContents;
-  }
-
-  const data = await loadDomainData();
-  const projectId = await scopedProjectId(context);
-
-  return data.publishedContents
-    .filter((content) =>
-      projectScope(projectId, normalizeProjectId(content.projectId)),
-    )
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-}
-
-function buildPlatformTargets(
-  contentId: string,
-  body: string,
-  platforms: GrowthPlatform[],
-  timestamp: string,
-): PlatformPublishTarget[] {
-  return platforms.map((platform, index) => ({
-    id: `target_${randomUUID()}`,
-    publishedContentId: contentId,
-    platform,
-    status: "draft",
-    bodyOverride: body,
-    retryCount: 0,
-    scheduledAt: index === 0 ? timestamp : undefined,
-    updatedAt: timestamp,
-  }));
-}
-
-function createPublishedContentRecord(input: {
-  projectId: string | null;
-  title: string;
-  body: string;
-  assetIds?: string[];
-  sourceTrendPostId?: string;
-  platforms?: GrowthPlatform[];
-}) {
-  const timestamp = now();
-  const id = makePublishedContentId();
-  return {
-    content: {
-      id,
-      projectId: input.projectId,
-      title: input.title,
-      body: input.body,
-      assetIds: ensureArray(input.assetIds),
-      sourceTrendPostId: input.sourceTrendPostId,
-      status: "draft" as PublishedContent["status"],
-      platformTargets: buildPlatformTargets(
-        id,
-        input.body,
-        input.platforms?.length ? input.platforms : ["x", "reddit", "wechat"],
-        timestamp,
-      ),
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    },
-    timestamp,
-  };
+  assertDatabaseStoreConfigured();
+  return assertDatabaseResult(await listDatabasePublishedContent(context));
 }
 
 export async function createPublishedContent(
@@ -376,21 +160,10 @@ export async function createPublishedContent(
   },
   context?: DomainContext,
 ) {
-  const databaseContent = await insertDatabasePublishedContent(input, context);
-  if (databaseContent) {
-    return databaseContent;
-  }
-
-  const data = await loadDomainData();
-  const projectId = await scopedProjectId(context);
-  const record = createPublishedContentRecord({
-    projectId,
-    ...input,
-  });
-
-  data.publishedContents.push(record.content);
-  await saveDomainData(data);
-  return record.content;
+  assertDatabaseStoreConfigured();
+  return assertDatabaseResult(
+    await insertDatabasePublishedContent(input, context),
+  );
 }
 
 export async function updatePublishedContent(
@@ -405,43 +178,8 @@ export async function updatePublishedContent(
   },
   context?: DomainContext,
 ) {
-  const databaseContent = await updateDatabasePublishedContent(
-    contentId,
-    patch,
-    context,
-  );
-  if (databaseContent) {
-    return databaseContent;
-  }
-
-  const data = await loadDomainData();
-  const content = data.publishedContents.find(
-    (candidate) => candidate.id === contentId,
-  );
-
-  if (!content) {
-    return null;
-  }
-
-  const { platformTargets, ...contentPatch } = patch;
-  Object.assign(content, contentPatch, { updatedAt: now() });
-  if (platformTargets?.length) {
-    const timestamp = now();
-    const overrides = new Map(
-      platformTargets.map((target) => [target.id, target.bodyOverride]),
-    );
-    content.platformTargets = content.platformTargets.map((target) =>
-      overrides.has(target.id)
-        ? {
-            ...target,
-            bodyOverride: overrides.get(target.id),
-            updatedAt: timestamp,
-          }
-        : target,
-    );
-  }
-  await saveDomainData(data);
-  return content;
+  assertDatabaseStoreConfigured();
+  return updateDatabasePublishedContent(contentId, patch, context);
 }
 
 export async function getPublishedContent(
@@ -456,29 +194,10 @@ export async function deletePublishedContent(
   contentId: string,
   context?: DomainContext,
 ) {
-  const databaseRemoved = await deleteDatabasePublishedContent(
-    contentId,
-    context,
+  assertDatabaseStoreConfigured();
+  return assertDatabaseResult(
+    await deleteDatabasePublishedContent(contentId, context),
   );
-  if (databaseRemoved !== null) {
-    return databaseRemoved;
-  }
-
-  const data = await loadDomainData();
-  const before = data.publishedContents.length;
-  data.publishedContents = data.publishedContents.filter(
-    (content) => content.id !== contentId,
-  );
-  data.engagementSnapshots = data.engagementSnapshots.filter(
-    (snapshot) => snapshot.publishedContentId !== contentId,
-  );
-
-  if (data.publishedContents.length === before) {
-    return false;
-  }
-
-  await saveDomainData(data);
-  return true;
 }
 
 export async function schedulePublishedContent(
@@ -486,124 +205,24 @@ export async function schedulePublishedContent(
   scheduledAt: string,
   context?: DomainContext,
 ) {
-  const databaseContent = await scheduleDatabasePublishedContent(
-    contentId,
-    scheduledAt,
-    context,
-  );
-  if (databaseContent) {
-    return databaseContent;
-  }
-
-  const data = await loadDomainData();
-  const content = data.publishedContents.find(
-    (candidate) => candidate.id === contentId,
-  );
-
-  if (!content) {
-    return null;
-  }
-
-  content.status = "scheduled";
-  content.updatedAt = now();
-  for (const target of content.platformTargets) {
-    target.status = "scheduled";
-    target.scheduledAt = scheduledAt;
-    target.updatedAt = now();
-  }
-
-  data.outboxEvents.push({
-    id: makeOutboxId(),
-    eventType: "publish.schedule",
-    aggregateType: "published_content",
-    aggregateId: contentId,
-    payload: { scheduledAt },
-    status: "pending",
-    attempts: 0,
-    idempotencyKey: `${contentId}:${scheduledAt}`,
-    availableAt: scheduledAt,
-    createdAt: now(),
-    updatedAt: now(),
-  });
-
-  await saveDomainData(data);
-  return content;
+  assertDatabaseStoreConfigured();
+  return scheduleDatabasePublishedContent(contentId, scheduledAt, context);
 }
 
 export async function publishContent(
   contentId: string,
   context?: DomainContext,
 ) {
-  const databaseStarted = await markDatabasePublishStarted(contentId, context);
-  if (databaseStarted) {
-    return databaseStarted;
-  }
-
-  const data = await loadDomainData();
-  const content = data.publishedContents.find(
-    (candidate) => candidate.id === contentId,
-  );
-
-  if (!content) {
-    return null;
-  }
-
-  const timestamp = now();
-  content.status = "published";
-  content.updatedAt = timestamp;
-
-  for (const target of content.platformTargets) {
-    const result = await publishContentToPlatform({
-      contentId: content.id,
-      platform: target.platform,
-      body: target.bodyOverride ?? content.body,
-    });
-
-    target.status = "published";
-    target.publishedAt = result.publishedAt;
-    target.platformContentId = result.platformContentId;
-    target.platformUrl = result.platformUrl;
-    target.lastError = undefined;
-    target.updatedAt = timestamp;
-  }
-
-  await saveDomainData(data);
-  return content;
+  assertDatabaseStoreConfigured();
+  return markDatabasePublishStarted(contentId, context);
 }
 
 export async function retryPublishedContent(
   contentId: string,
   context?: DomainContext,
 ) {
-  const databaseContent = await retryDatabasePublishedContent(
-    contentId,
-    context,
-  );
-  if (databaseContent) {
-    return databaseContent;
-  }
-
-  const data = await loadDomainData();
-  const content = data.publishedContents.find(
-    (candidate) => candidate.id === contentId,
-  );
-
-  if (!content) {
-    return null;
-  }
-
-  for (const target of content.platformTargets) {
-    if (target.status === "failed") {
-      target.status = "publishing";
-      target.retryCount += 1;
-      target.updatedAt = now();
-    }
-  }
-
-  content.status = "publishing";
-  content.updatedAt = now();
-  await saveDomainData(data);
-  return content;
+  assertDatabaseStoreConfigured();
+  return retryDatabasePublishedContent(contentId, context);
 }
 
 export async function createEngagementSnapshot(
@@ -611,21 +230,26 @@ export async function createEngagementSnapshot(
   platformTargetId: string,
   context?: DomainContext,
 ) {
-  const databaseContents = await listDatabasePublishedContent(context);
-  if (databaseContents) {
-    const content = databaseContents.find((item) => item.id === contentId);
-    const target = content?.platformTargets.find(
-      (candidate) => candidate.id === platformTargetId,
-    );
+  assertDatabaseStoreConfigured();
+  const contents = assertDatabaseResult(
+    await listDatabasePublishedContent(context),
+  );
+  const content = contents.find((item) => item.id === contentId);
+  const target = content?.platformTargets.find(
+    (candidate) => candidate.id === platformTargetId,
+  );
 
-    if (!content || !target) {
-      return null;
-    }
+  if (!content || !target) {
+    return null;
+  }
 
-    const index = (await listDatabaseEngagementSnapshots(context))?.length ?? 0;
-    const metrics = await fetchEngagement(target.platform, index + 1);
+  const snapshotCount =
+    assertDatabaseResult(await listDatabaseEngagementSnapshots(context))
+      .length + 1;
+  const metrics = await fetchEngagement(target.platform, snapshotCount);
 
-    return insertDatabaseEngagementSnapshot(
+  return assertDatabaseResult(
+    await insertDatabaseEngagementSnapshot(
       {
         publishedContentId: contentId,
         platformTargetId,
@@ -640,86 +264,34 @@ export async function createEngagementSnapshot(
         },
       },
       context,
-    );
-  }
-
-  const data = await loadDomainData();
-  const content = data.publishedContents.find(
-    (candidate) => candidate.id === contentId,
+    ),
   );
-  const target = content?.platformTargets.find(
-    (candidate) => candidate.id === platformTargetId,
-  );
-
-  if (!content || !target) {
-    return null;
-  }
-
-  const index = data.engagementSnapshots.length + 1;
-  const metrics = await fetchEngagement(target.platform, index);
-
-  const snapshot: EngagementSnapshot = {
-    id: `snapshot_${randomUUID()}`,
-    projectId: content.projectId,
-    publishedContentId: contentId,
-    platformTargetId,
-    platform: target.platform,
-    platformContentId: target.platformContentId,
-    capturedAt: now(),
-    metrics,
-    platformMetrics: {
-      saves: Math.max(Math.floor(metrics.bookmarks / 2), 1),
-    },
-    rawPayload: {
-      note: "simulated engagement payload",
-    },
-  };
-
-  data.engagementSnapshots.push(snapshot);
-  await saveDomainData(data);
-  return snapshot;
 }
 
 export async function requestEngagementRefresh(
   input?: { contentId?: string },
   context?: DomainContext,
 ) {
-  const databaseEvent = await enqueueDatabaseOutboxEvent(
-    {
-      eventType: "engagement.refresh",
-      aggregateType: input?.contentId ? "published_content" : "project",
-      aggregateId: input?.contentId,
-      payload: input?.contentId ? { publishedContentId: input.contentId } : {},
-      idempotencyKey: `engagement.refresh:${input?.contentId ?? "project"}:${now()}`,
-    },
-    context,
+  assertDatabaseStoreConfigured();
+  return assertDatabaseResult(
+    await insertDatabaseOutboxEvent(
+      {
+        eventType: "engagement.refresh",
+        aggregateType: input?.contentId ? "published_content" : "project",
+        aggregateId: input?.contentId,
+        payload: input?.contentId
+          ? { publishedContentId: input.contentId }
+          : {},
+        idempotencyKey: `engagement.refresh:${input?.contentId ?? "project"}:${now()}`,
+      },
+      context,
+    ),
   );
-
-  if (databaseEvent) {
-    return databaseEvent;
-  }
-
-  return enqueueOutboxEvent({
-    eventType: "engagement.refresh",
-    aggregateType: input?.contentId ? "published_content" : "project",
-    aggregateId: input?.contentId ?? "project",
-    payload: input?.contentId ? { publishedContentId: input.contentId } : {},
-    idempotencyKey: `engagement.refresh:${input?.contentId ?? "project"}:${now()}`,
-  });
 }
 
 export async function listEngagementSnapshots(context?: DomainContext) {
-  const databaseSnapshots = await listDatabaseEngagementSnapshots(context);
-  if (databaseSnapshots) {
-    return databaseSnapshots;
-  }
-
-  const data = await loadDomainData();
-  const projectId = await scopedProjectId(context);
-
-  return data.engagementSnapshots.filter((snapshot) =>
-    projectScope(projectId, normalizeProjectId(snapshot.projectId)),
-  );
+  assertDatabaseStoreConfigured();
+  return assertDatabaseResult(await listDatabaseEngagementSnapshots(context));
 }
 
 export async function getEngagementOverview(
@@ -820,30 +392,8 @@ export async function createTrendQuery(
   },
   context?: DomainContext,
 ) {
-  const databaseQuery = await insertDatabaseTrendQuery(input, context);
-  if (databaseQuery) {
-    return databaseQuery;
-  }
-
-  const data = await loadDomainData();
-  const projectId = await scopedProjectId(context);
-  const timestamp = now();
-  const query: TrendQuery = {
-    id: makeTrendQueryId(),
-    projectId,
-    name: input.name,
-    keywords: input.keywords,
-    excludedKeywords: input.excludedKeywords ?? [],
-    platforms: input.platforms,
-    language: input.language,
-    timeRange: input.timeRange ?? "7d",
-    createdAt: timestamp,
-    updatedAt: timestamp,
-  };
-
-  data.trendQueries.push(query);
-  await saveDomainData(data);
-  return query;
+  assertDatabaseStoreConfigured();
+  return assertDatabaseResult(await insertDatabaseTrendQuery(input, context));
 }
 
 export async function updateTrendQuery(
@@ -851,185 +401,80 @@ export async function updateTrendQuery(
   patch: Partial<Omit<TrendQuery, "id" | "projectId" | "createdAt">>,
   context?: DomainContext,
 ) {
-  const databaseQuery = await updateDatabaseTrendQuery(queryId, patch, context);
-  if (databaseQuery) {
-    return databaseQuery;
-  }
-
-  const data = await loadDomainData();
-  const query = data.trendQueries.find((candidate) => candidate.id === queryId);
-
-  if (!query) {
-    return null;
-  }
-
-  Object.assign(query, patch, { updatedAt: now() });
-  await saveDomainData(data);
-  return query;
+  assertDatabaseStoreConfigured();
+  return updateDatabaseTrendQuery(queryId, patch, context);
 }
 
 export async function deleteTrendQuery(
   queryId: string,
   context?: DomainContext,
 ) {
-  const databaseRemoved = await deleteDatabaseTrendQuery(queryId, context);
-  if (databaseRemoved !== null) {
-    return databaseRemoved;
-  }
-
-  const data = await loadDomainData();
-  const before = data.trendQueries.length;
-  data.trendQueries = data.trendQueries.filter((query) => query.id !== queryId);
-  data.trendRuns = data.trendRuns.filter((run) => run.queryId !== queryId);
-  data.trendPosts = data.trendPosts.filter((post) => post.queryId !== queryId);
-
-  if (before === data.trendQueries.length) {
-    return false;
-  }
-
-  await saveDomainData(data);
-  return true;
+  assertDatabaseStoreConfigured();
+  return assertDatabaseResult(await deleteDatabaseTrendQuery(queryId, context));
 }
 
 export async function listTrendQueries(context?: DomainContext) {
-  const databaseQueries = await listDatabaseTrendQueries(context);
-  if (databaseQueries) {
-    return databaseQueries;
-  }
-
-  const data = await loadDomainData();
-  const projectId = await scopedProjectId(context);
-  return data.trendQueries.filter((query) =>
-    projectScope(projectId, normalizeProjectId(query.projectId)),
-  );
+  assertDatabaseStoreConfigured();
+  return assertDatabaseResult(await listDatabaseTrendQueries(context));
 }
 
 export async function runTrendQuery(queryId: string, context?: DomainContext) {
-  const databaseQueries = await listDatabaseTrendQueries(context);
-  if (databaseQueries) {
-    const query = databaseQueries.find((candidate) => candidate.id === queryId);
-    if (!query) {
-      return null;
-    }
-
-    const run = await insertDatabaseTrendRun(query, context);
-    if (!run) {
-      return null;
-    }
-
-    return { run, posts: [] };
-  }
-
-  return executeLocalTrendQuery(queryId);
-}
-
-async function executeLocalTrendQuery(queryId: string, forcedRunId?: string) {
-  const data = await loadDomainData();
-  const query = data.trendQueries.find((candidate) => candidate.id === queryId);
+  const query = (await listTrendQueries(context)).find(
+    (candidate) => candidate.id === queryId,
+  );
 
   if (!query) {
     return null;
   }
 
-  const run: TrendRun = {
-    id: forcedRunId ?? makeTrendRunId(),
-    queryId,
-    status: "running",
-    startedAt: now(),
-    platforms: query.platforms,
-    resultCount: 0,
-    errors: [],
-  };
-
-  data.trendRuns.push(run);
-
-  const projectId = query.projectId;
-  const posts: TrendPost[] = (await searchTrends({ query, runId: run.id })).map(
-    (post) => ({
-      ...post,
-      id: makeTrendPostId(),
-      projectId,
-      queryId,
-      runId: run.id,
-    }),
-  );
-
-  const uniqueByUrl = new Map<string, TrendPost>();
-  for (const post of posts) {
-    if (!uniqueByUrl.has(post.url)) {
-      uniqueByUrl.set(post.url, post);
-    }
+  const run = await insertDatabaseTrendRun(query, context);
+  if (!run) {
+    throw new Error("Unable to create Supabase trend run.");
   }
 
-  const orderedPosts = [...uniqueByUrl.values()].sort(
-    (a, b) =>
-      b.relevanceScore - a.relevanceScore ||
-      b.postedAt.localeCompare(a.postedAt),
-  );
-
-  data.trendPosts.push(...orderedPosts);
-  run.status = "succeeded";
-  run.resultCount = orderedPosts.length;
-  run.finishedAt = now();
-  await saveDomainData(data);
-  return { run, posts: orderedPosts };
+  return { run, posts: [] };
 }
 
 export async function executeTrendRunFromOutbox(
   input: { runId: string; queryId: string },
   context?: DomainContext,
 ) {
-  const databaseQueries = await listDatabaseTrendQueries(context);
-  if (databaseQueries) {
-    const query = databaseQueries.find(
-      (candidate) => candidate.id === input.queryId,
-    );
-    if (!query) {
-      return null;
-    }
+  const query = (await listTrendQueries(context)).find(
+    (candidate) => candidate.id === input.queryId,
+  );
 
-    const posts = (await searchTrends({ query, runId: input.runId })).map(
-      (post) => ({
-        ...post,
-        projectId: query.projectId,
-        queryId: query.id,
-        runId: input.runId,
-      }),
-    );
-    const uniqueByUrl = new Map<string, TrendPost>();
-    for (const post of posts) {
-      if (!uniqueByUrl.has(post.url)) {
-        uniqueByUrl.set(post.url, post);
-      }
-    }
-    const orderedPosts = [...uniqueByUrl.values()].sort(
-      (a, b) =>
-        b.relevanceScore - a.relevanceScore ||
-        b.postedAt.localeCompare(a.postedAt),
-    );
-    return finishDatabaseTrendRun(input.runId, orderedPosts, [], context);
+  if (!query) {
+    return null;
   }
 
-  return executeLocalTrendQuery(input.queryId, input.runId);
+  const posts = (await searchTrends({ query, runId: input.runId })).map(
+    (post) => ({
+      ...post,
+      projectId: query.projectId,
+      queryId: query.id,
+      runId: input.runId,
+    }),
+  );
+  const uniqueByUrl = new Map<string, TrendPost>();
+  for (const post of posts) {
+    if (!uniqueByUrl.has(post.url)) {
+      uniqueByUrl.set(post.url, post);
+    }
+  }
+  const orderedPosts = [...uniqueByUrl.values()].sort(
+    (a, b) =>
+      b.relevanceScore - a.relevanceScore ||
+      b.postedAt.localeCompare(a.postedAt),
+  );
+
+  return assertDatabaseResult(
+    await finishDatabaseTrendRun(input.runId, orderedPosts, [], context),
+  );
 }
 
 export async function listTrendPosts(context?: DomainContext) {
-  const databasePosts = await listDatabaseTrendPosts(context);
-  if (databasePosts) {
-    return databasePosts;
-  }
-
-  const data = await loadDomainData();
-  const projectId = await scopedProjectId(context);
-  return data.trendPosts
-    .filter((post) =>
-      projectScope(projectId, normalizeProjectId(post.projectId)),
-    )
-    .sort(
-      (a, b) =>
-        b.relevanceScore - a.relevanceScore ||
-        b.updatedAt.localeCompare(a.updatedAt),
-    );
+  assertDatabaseStoreConfigured();
+  return assertDatabaseResult(await listDatabaseTrendPosts(context));
 }
 
 export async function updateTrendPost(
@@ -1039,54 +484,16 @@ export async function updateTrendPost(
   >,
   context?: DomainContext,
 ) {
-  const databasePost = await updateDatabaseTrendPost(postId, patch, context);
-  if (databasePost) {
-    return databasePost;
-  }
-
-  const data = await loadDomainData();
-  const post = data.trendPosts.find((candidate) => candidate.id === postId);
-
-  if (!post) {
-    return null;
-  }
-
-  Object.assign(post, patch, { updatedAt: now() });
-  await saveDomainData(data);
-  return post;
+  assertDatabaseStoreConfigured();
+  return updateDatabaseTrendPost(postId, patch, context);
 }
 
 export async function createResponseDraftFromTrendPost(
   postId: string,
   context?: DomainContext,
 ) {
-  const databaseResult = await createDatabaseResponseDraftFromTrendPost(
-    postId,
-    context,
-  );
-  if (databaseResult) {
-    return databaseResult;
-  }
-
-  const data = await loadDomainData();
-  const post = data.trendPosts.find((candidate) => candidate.id === postId);
-
-  if (!post) {
-    return null;
-  }
-
-  post.status = "responded";
-  post.updatedAt = now();
-  const record = createPublishedContentRecord({
-    projectId: post.projectId,
-    title: `Response: ${post.title}`,
-    body: `Reply to ${post.platform} post ${post.url}\n\n${post.summary}`,
-    sourceTrendPostId: post.id,
-    platforms: [post.platform],
-  });
-  data.publishedContents.push(record.content);
-  await saveDomainData(data);
-  return { post, draft: record.content };
+  assertDatabaseStoreConfigured();
+  return createDatabaseResponseDraftFromTrendPost(postId, context);
 }
 
 export async function getWorkspaceSummary(context?: DomainContext) {
@@ -1107,18 +514,17 @@ export async function getWorkspaceSummary(context?: DomainContext) {
     posts,
     overview,
     connectors,
-    activeProjectId: await scopedProjectId(context),
+    activeProjectId: context?.activeProjectId ?? null,
   };
 }
 
 export async function listConnectorConnections(context?: DomainContext) {
-  const databaseConnections = await listDatabaseConnectorAccounts(context);
-  if (databaseConnections) {
-    return mergeConnectorConnections(databaseConnections);
-  }
+  assertDatabaseStoreConfigured();
+  const databaseConnections = assertDatabaseResult(
+    await listDatabaseConnectorAccounts(context),
+  );
 
-  const data = await loadDomainData();
-  return mergeConnectorConnections(data.connectorAccounts);
+  return mergeConnectorConnections(databaseConnections);
 }
 
 export async function upsertConnectorAccount(
@@ -1130,112 +536,28 @@ export async function upsertConnectorAccount(
   },
   context?: DomainContext,
 ) {
-  const databaseAccount = await upsertDatabaseConnectorAccount(input, context);
-  if (databaseAccount) {
-    return databaseAccount;
-  }
-
-  const data = await loadDomainData();
-  const projectId = await scopedProjectId(context);
-  const timestamp = now();
-  const existing = data.connectorAccounts.find(
-    (account) => account.platform === input.platform,
+  assertDatabaseStoreConfigured();
+  return assertDatabaseResult(
+    await upsertDatabaseConnectorAccount(input, context),
   );
-  const account: ConnectorAccount = {
-    id: existing?.id ?? `connector_${randomUUID()}`,
-    workspaceId: existing?.workspaceId ?? "workspace-local",
-    platform: input.platform,
-    status: input.status ?? "active",
-    hasCredentialRef: true,
-    expiresAt: input.expiresAt,
-    createdAt: existing?.createdAt ?? timestamp,
-    updatedAt: timestamp,
-  };
-
-  data.connectorAccounts = data.connectorAccounts.filter(
-    (candidate) => candidate.platform !== input.platform,
-  );
-  data.connectorAccounts.push({
-    ...account,
-    workspaceId: projectId ?? account.workspaceId,
-  });
-  await saveDomainData(data);
-  return account;
 }
 
-export async function enqueueOutboxEvent(input: {
-  eventType: string;
-  aggregateType: string;
-  aggregateId: string;
-  payload: Record<string, unknown>;
-  idempotencyKey: string;
-  availableAt?: string;
-}) {
-  const data = await loadDomainData();
-  const event: OutboxEvent = {
-    id: makeOutboxId(),
-    eventType: input.eventType,
-    aggregateType: input.aggregateType,
-    aggregateId: input.aggregateId,
-    payload: input.payload,
-    status: "pending",
-    attempts: 0,
-    idempotencyKey: input.idempotencyKey,
-    availableAt: input.availableAt ?? now(),
-    createdAt: now(),
-    updatedAt: now(),
-  };
-
-  data.outboxEvents.push(event);
-  await saveDomainData(data);
-  return event;
-}
-
-export async function enqueueDatabaseOutboxEvent(
+export async function enqueueOutboxEvent(
   input: {
     eventType: string;
     aggregateType: string;
-    aggregateId?: string;
+    aggregateId: string;
     payload: Record<string, unknown>;
     idempotencyKey: string;
     availableAt?: string;
   },
   context?: DomainContext,
 ) {
-  const databaseEvent = await insertDatabaseOutboxEvent(input, context);
-  if (databaseEvent) {
-    return databaseEvent;
-  }
-
-  return null;
-}
-
-export async function updateLocalOutboxEventStatus(
-  eventId: string,
-  status: OutboxEvent["status"],
-  lastError?: string,
-) {
-  const data = await loadDomainData();
-  const event = data.outboxEvents.find((candidate) => candidate.id === eventId);
-
-  if (!event) {
-    return false;
-  }
-
-  event.status = status;
-  event.lastError = lastError;
-  event.attempts += status === "processing" ? 1 : 0;
-  event.updatedAt = now();
-  await saveDomainData(data);
-  return true;
+  assertDatabaseStoreConfigured();
+  return assertDatabaseResult(await insertDatabaseOutboxEvent(input, context));
 }
 
 export async function listOutboxEvents(context?: DomainContext) {
-  const databaseEvents = await listDatabaseOutboxEvents(context);
-  if (databaseEvents) {
-    return databaseEvents;
-  }
-
-  const data = await loadDomainData();
-  return data.outboxEvents;
+  assertDatabaseStoreConfigured();
+  return assertDatabaseResult(await listDatabaseOutboxEvents(context));
 }

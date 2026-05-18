@@ -1,9 +1,9 @@
-import type { ContentAssetKind } from "../../../../packages/shared/src/content.js";
+import type { ContentAssetKind } from "../../shared/src/content.js";
 
 export type {
   ContentAsset,
   ContentAssetKind,
-} from "../../../../packages/shared/src/content.js";
+} from "../../shared/src/content.js";
 
 const imageExtensions = new Set([
   ".png",

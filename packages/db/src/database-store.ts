@@ -1,4 +1,3 @@
-import { createClient } from "@supabase/supabase-js";
 import type {
   ConnectorAccount,
   ContentAsset,
@@ -11,7 +10,11 @@ import type {
   TrendQuery,
   TrendRun,
   WorkspaceProject,
-} from "../../../../packages/shared/src/index.js";
+} from "../../shared/src/index.js";
+import {
+  createSupabaseServiceClient,
+  supabaseServiceConfig,
+} from "./client.js";
 import { getAssetType } from "./content-assets.js";
 
 export type StoreContext = {
@@ -201,33 +204,51 @@ type RpcResponseDraftResult = {
   targets: PlatformTargetRow[];
 };
 
-function config() {
-  const url = process.env.SUPABASE_URL;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-  if (!url || !serviceRoleKey) {
-    return null;
-  }
-
-  return { url, serviceRoleKey };
-}
+type RpcDefaultWorkspaceResult = {
+  workspaceId?: string;
+  workspace_id?: string;
+  projectId?: string;
+  project_id?: string;
+  userId?: string;
+  user_id?: string;
+};
 
 function client() {
-  const next = config();
-  if (!next) {
-    return null;
-  }
-
-  return createClient(next.url, next.serviceRoleKey, {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false,
-    },
-  });
+  return createSupabaseServiceClient();
 }
 
 export function isDatabaseStoreEnabled() {
-  return Boolean(config());
+  return Boolean(supabaseServiceConfig());
+}
+
+async function ensureDefaultScope(
+  supabase: NonNullable<ReturnType<typeof client>>,
+  userId: string,
+): Promise<DatabaseScope | null> {
+  const { data, error } = await supabase.rpc("ensure_default_workspace", {
+    p_user_id: userId,
+    p_workspace_name: "Open Growth",
+    p_project_name: "Launch Lab",
+  });
+
+  if (error || !data) {
+    return null;
+  }
+
+  const result = data as RpcDefaultWorkspaceResult;
+  const workspaceId = result.workspaceId ?? result.workspace_id;
+  const projectId = result.projectId ?? result.project_id;
+  const resolvedUserId = result.userId ?? result.user_id ?? userId;
+
+  if (!workspaceId || !projectId) {
+    return null;
+  }
+
+  return {
+    workspaceId,
+    projectId,
+    userId: resolvedUserId,
+  };
 }
 
 export async function getDefaultScope(
@@ -260,6 +281,11 @@ export async function getDefaultScope(
     .maybeSingle();
 
   if (membershipError || !membership) {
+    const createdScope = await ensureDefaultScope(supabase, userId);
+    if (createdScope) {
+      return createdScope;
+    }
+
     throw membershipError ?? new Error("Workspace membership not found.");
   }
 
@@ -276,6 +302,11 @@ export async function getDefaultScope(
         .maybeSingle();
 
   if (projectError || !project) {
+    const createdScope = await ensureDefaultScope(supabase, userId);
+    if (createdScope) {
+      return createdScope;
+    }
+
     throw projectError ?? new Error("Project not found.");
   }
 

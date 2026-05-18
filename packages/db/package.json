@@ -1,0 +1,9 @@
+{
+  "name": "@open-growth/db",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  }
+}

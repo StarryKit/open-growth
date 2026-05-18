@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -34,21 +34,14 @@ afterEach(async () => {
 });
 
 describe("media storage", () => {
-  it("saves local media objects with text previews when Supabase is not configured", async () => {
-    const stored = await mediaStorage.saveMediaObject({
-      originalFilename: "brief.md",
-      buffer: Buffer.from("line one\nline two"),
-      type: "text",
-    });
-
-    expect(stored).toMatchObject({
-      filename: "brief.md",
-      path: "content/brief.md",
-      preview: "line one\nline two",
-    });
+  it("fails when Supabase storage is not configured", async () => {
     await expect(
-      readFile(path.join(process.cwd(), "content", "brief.md"), "utf8"),
-    ).resolves.toBe("line one\nline two");
+      mediaStorage.saveMediaObject({
+        originalFilename: "brief.md",
+        buffer: Buffer.from("line one\nline two"),
+        type: "text",
+      }),
+    ).rejects.toThrow("Supabase storage credentials are not configured.");
   });
 
   it("uses workspace/project/asset paths for Supabase uploads", async () => {

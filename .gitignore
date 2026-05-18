@@ -2,6 +2,7 @@
 
 # dependencies
 node_modules/
+**/node_modules/
 /.pnp
 .pnp.*
 .yarn/*
@@ -12,8 +13,6 @@ node_modules/
 
 # testing
 coverage/
-playwright-report/
-test-results/
 
 # next.js
 /.next/
@@ -21,6 +20,7 @@ test-results/
 
 # vite
 .vite/
+**/.vite/
 
 # production
 build/
@@ -47,6 +47,8 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# local app data
-apps/api/data/
-apps/api/node_modules/.vite/vitest/da39a3ee5e6b4b0d3255bfef95601890afd80709/results.json
+# supabase local state
+**/.branches/
+**/.temp/
+
+.codex/

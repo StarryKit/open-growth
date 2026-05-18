@@ -1,20 +1,12 @@
-import { createHash, randomUUID } from "node:crypto";
-import { createReadStream, promises as fs } from "node:fs";
-import path from "node:path";
+import { createHash } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
-import type { ContentAssetKind } from "../../../../packages/shared/src/index.js";
-import {
-  createUniqueFilename,
-  ensureContentDirectory,
-  getContentFilePath,
-  sanitizeFilename,
-} from "./content-server.js";
 import {
   markDatabaseContentAssetFailed,
   prepareDatabaseContentAssetUpload,
   type StoreContext,
-} from "./database-store.js";
-import { getActiveProject } from "./project-store.js";
+} from "../../../../packages/db/src/database-store.js";
+import type { ContentAssetKind } from "../../../../packages/shared/src/index.js";
+import { sanitizeFilename } from "./content-server.js";
 
 export type StoredMediaObject = {
   assetId?: string;
@@ -42,14 +34,16 @@ function supabaseStorageConfig() {
   const bucket = process.env.SUPABASE_STORAGE_BUCKET ?? "content-assets";
 
   if (!url || !serviceRoleKey) {
-    return null;
+    throw new Error("Supabase storage credentials are not configured.");
   }
 
   return { url, serviceRoleKey, bucket };
 }
 
 export function isSupabaseStorageEnabled() {
-  return Boolean(supabaseStorageConfig());
+  return Boolean(
+    process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY,
+  );
 }
 
 function textPreview(input: SaveMediaInput) {
@@ -66,102 +60,53 @@ export async function saveMediaObject(
   input: SaveMediaInput,
 ): Promise<StoredMediaObject> {
   const config = supabaseStorageConfig();
-
-  if (config) {
-    const filename = sanitizeFilename(input.originalFilename);
-    const prepared = await prepareDatabaseContentAssetUpload(
-      {
-        filename,
-        storageBucket: config.bucket,
-        mimeType: input.mimeType,
-      },
-      input.context,
-    );
-    const activeProject = prepared
-      ? null
-      : await getActiveProject(input.context);
-    const workspaceId = prepared?.workspaceId ?? "workspace-local";
-    const projectId =
-      prepared?.projectId ??
-      input.context?.activeProjectId ??
-      activeProject?.id ??
-      "default-project";
-    const assetId = prepared?.assetId ?? randomUUID();
-    const storagePath =
-      prepared?.storagePath ??
-      `${workspaceId}/${projectId}/${assetId}/${filename}`;
-    const supabase = createClient(config.url, config.serviceRoleKey, {
-      auth: {
-        autoRefreshToken: false,
-        persistSession: false,
-      },
-    });
-    const { error } = await supabase.storage
-      .from(config.bucket)
-      .upload(storagePath, input.buffer, {
-        contentType: input.mimeType ?? "application/octet-stream",
-        upsert: false,
-      });
-
-    if (error) {
-      if (prepared?.assetId) {
-        await markDatabaseContentAssetFailed(prepared.assetId, input.context);
-      }
-      throw error;
-    }
-
-    return {
-      assetId: prepared?.assetId,
+  const filename = sanitizeFilename(input.originalFilename);
+  const prepared = await prepareDatabaseContentAssetUpload(
+    {
       filename,
-      path: storagePath,
-      bucket: config.bucket,
-      storagePath,
-      sha256: sha256(input.buffer),
-      size: input.buffer.byteLength,
-      type: input.type,
-      preview: textPreview(input),
-    };
+      storageBucket: config.bucket,
+      mimeType: input.mimeType,
+    },
+    input.context,
+  );
+
+  if (!prepared) {
+    throw new Error("Unable to prepare Supabase content asset upload.");
   }
 
-  const contentDirectory = await ensureContentDirectory();
-  const filename = await createUniqueFilename(
-    input.originalFilename,
-    contentDirectory,
-  );
-  const filePath = await getContentFilePath(filename, contentDirectory);
+  const supabase = createClient(config.url, config.serviceRoleKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  });
+  const { error } = await supabase.storage
+    .from(config.bucket)
+    .upload(prepared.storagePath, input.buffer, {
+      contentType: input.mimeType ?? "application/octet-stream",
+      upsert: false,
+    });
 
-  await fs.writeFile(filePath, input.buffer);
+  if (error) {
+    await markDatabaseContentAssetFailed(prepared.assetId, input.context);
+    throw error;
+  }
 
   return {
+    assetId: prepared.assetId,
     filename,
-    path: `content/${filename}`,
+    path: prepared.storagePath,
+    bucket: config.bucket,
+    storagePath: prepared.storagePath,
+    sha256: sha256(input.buffer),
     size: input.buffer.byteLength,
     type: input.type,
     preview: textPreview(input),
   };
 }
 
-export async function readLocalMediaObject(filename: string) {
-  const filePath = await getContentFilePath(filename);
-  const stats = await fs.stat(filePath);
-  return {
-    stream: createReadStream(filePath),
-    size: stats.size,
-    extension: path.extname(filename).toLowerCase(),
-  };
-}
-
-export async function deleteLocalMediaObject(filename: string) {
-  const filePath = await getContentFilePath(filename);
-  await fs.unlink(filePath);
-}
-
 export async function deleteSupabaseMediaObject(storagePath: string) {
   const config = supabaseStorageConfig();
-
-  if (!config) {
-    return false;
-  }
 
   const supabase = createClient(config.url, config.serviceRoleKey, {
     auth: {
@@ -182,10 +127,6 @@ export async function deleteSupabaseMediaObject(storagePath: string) {
 
 export async function readSupabaseMediaObject(storagePath: string) {
   const config = supabaseStorageConfig();
-
-  if (!config) {
-    return null;
-  }
 
   const supabase = createClient(config.url, config.serviceRoleKey, {
     auth: {

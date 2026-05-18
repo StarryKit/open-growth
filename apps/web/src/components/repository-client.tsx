@@ -62,11 +62,7 @@ function AssetPreview({ asset }: { asset: ContentAsset }) {
         <img
           alt={asset.filename}
           className="size-full object-cover"
-          src={
-            asset.id
-              ? `/api/content-assets/${asset.id}/blob`
-              : `/api/upload?filename=${encodeURIComponent(asset.filename)}`
-          }
+          src={`/api/content-assets/${asset.id}/blob`}
         />
       </div>
     );
@@ -170,7 +166,9 @@ export function RepositoryClient({
   );
 
   const refreshAssets = useCallback(async () => {
-    const data = await apiJson<{ assets: ContentAsset[] }>("/api/upload");
+    const data = await apiJson<{ assets: ContentAsset[] }>(
+      "/api/content-assets",
+    );
     setAssets(data.assets);
     setSelectedAssetId((current) => current ?? data.assets[0]?.id ?? null);
   }, []);
@@ -191,7 +189,7 @@ export function RepositoryClient({
             const formData = new FormData();
             formData.append("file", file);
 
-            await apiJson<UploadResponse>("/api/upload", {
+            await apiJson<UploadResponse>("/api/content-assets", {
               method: "POST",
               body: formData,
               headers: {},
@@ -231,17 +229,12 @@ export function RepositoryClient({
       setMessage(null);
 
       try {
-        await apiJson<{ success: boolean }>(
-          `/api/upload?filename=${encodeURIComponent(asset.filename)}`,
-          {
-            method: "DELETE",
-          },
-        );
+        await apiJson<{ success: boolean }>(`/api/content-assets/${asset.id}`, {
+          method: "DELETE",
+        });
 
         setAssets((currentAssets) =>
-          currentAssets.filter(
-            (candidate) => candidate.filename !== asset.filename,
-          ),
+          currentAssets.filter((candidate) => candidate.id !== asset.id),
         );
         setSelectedAssetId((current) =>
           current === asset.id ? null : current,

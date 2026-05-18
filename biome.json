@@ -11,8 +11,6 @@
       "!dist",
       "!apps/**/dist",
       "!apps/**/tsconfig.tsbuildinfo",
-      "!playwright-report",
-      "!test-results",
       "!node_modules"
     ]
   },

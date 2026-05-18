@@ -1,5 +1,4 @@
-import { publishContentToPlatform } from "./connector-service.js";
-import type { OutboxEventRecord } from "./database-store.js";
+import type { OutboxEventRecord } from "../../../../packages/db/src/database-store.js";
 import {
   completeDatabaseContentAssetDeletion,
   completeDatabasePublishedTarget,
@@ -8,13 +7,12 @@ import {
   listDueDatabaseOutboxEvents,
   type StoreContext,
   updateDatabaseOutboxEventStatus,
-} from "./database-store.js";
+} from "../../../../packages/db/src/database-store.js";
+import { publishContentToPlatform } from "./connector-service.js";
 import {
   createEngagementSnapshot,
   executeTrendRunFromOutbox,
-  listOutboxEvents,
   listPublishedContent,
-  updateLocalOutboxEventStatus,
 } from "./domain-store.js";
 import { deleteSupabaseMediaObject } from "./media-storage.js";
 
@@ -163,23 +161,17 @@ function eventContext(
   };
 }
 
-function dueLocalEvent(event: OutboxEvent) {
-  return (
-    event.status === "pending" &&
-    new Date(event.availableAt).getTime() <= Date.now()
-  );
-}
-
 export async function processDueOutboxEvents(
   context?: StoreContext,
   limit = 25,
 ): Promise<ProcessResult> {
   await enqueueDueDatabaseEngagementRefreshEvents(context);
   const databaseEvents = await listDueDatabaseOutboxEvents(context, limit);
-  const isDatabaseMode = databaseEvents !== null;
-  const events =
-    databaseEvents ??
-    (await listOutboxEvents()).filter(dueLocalEvent).slice(0, limit);
+  if (databaseEvents === null) {
+    throw new Error("Supabase outbox storage is not configured.");
+  }
+
+  const events = databaseEvents;
   const result: ProcessResult = {
     processed: 0,
     succeeded: 0,
@@ -191,43 +183,31 @@ export async function processDueOutboxEvents(
     result.processed += 1;
 
     try {
-      if (isDatabaseMode) {
-        await updateDatabaseOutboxEventStatus(
-          event.id,
-          "processing",
-          undefined,
-          context,
-        );
-      } else {
-        await updateLocalOutboxEventStatus(event.id, "processing");
-      }
+      await updateDatabaseOutboxEventStatus(
+        event.id,
+        "processing",
+        undefined,
+        context,
+      );
 
       await processEvent(event, eventContext(event, context));
 
-      if (isDatabaseMode) {
-        await updateDatabaseOutboxEventStatus(
-          event.id,
-          "succeeded",
-          undefined,
-          context,
-        );
-      } else {
-        await updateLocalOutboxEventStatus(event.id, "succeeded");
-      }
+      await updateDatabaseOutboxEventStatus(
+        event.id,
+        "succeeded",
+        undefined,
+        context,
+      );
       result.succeeded += 1;
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Outbox processing failed.";
-      if (isDatabaseMode) {
-        await updateDatabaseOutboxEventStatus(
-          event.id,
-          "failed",
-          message,
-          context,
-        );
-      } else {
-        await updateLocalOutboxEventStatus(event.id, "failed", message);
-      }
+      await updateDatabaseOutboxEventStatus(
+        event.id,
+        "failed",
+        message,
+        context,
+      );
       result.failed += 1;
       result.errors.push({ eventId: event.id, error: message });
     }

@@ -8,7 +8,7 @@ export type AuthenticatedUser = {
 
 export type AuthContext = {
   user: AuthenticatedUser;
-  mode: "supabase" | "local-dev";
+  mode: "supabase";
 };
 
 function supabaseConfig() {
@@ -42,13 +42,7 @@ export async function resolveAuthContext(
   const config = supabaseConfig();
 
   if (!config) {
-    return {
-      mode: "local-dev",
-      user: {
-        id: "local-dev-user",
-        email: "local-dev@open-growth.test",
-      },
-    };
+    throw new Error("Supabase API credentials are not configured.");
   }
 
   const token = bearerToken(request);

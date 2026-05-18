@@ -10,6 +10,10 @@
     "declaration": false,
     "sourceMap": true
   },
-  "include": ["src/**/*.ts", "../../packages/shared/src/**/*.ts"],
+  "include": [
+    "src/**/*.ts",
+    "../../packages/shared/src/**/*.ts",
+    "../../packages/db/src/**/*.ts"
+  ],
   "exclude": ["node_modules", "../../dist"]
 }

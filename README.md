@@ -53,7 +53,7 @@ open-growth/
 - Frontend: React 19, React Router 7, Vite 6
 - Backend: Fastify 5 with multipart uploads, static serving, and CORS
 - Shared layer: `packages/shared`
-- Tooling: TypeScript, Biome, Vitest, Playwright
+- Tooling: TypeScript, Biome, Vitest
 
 ## Local Development
 
@@ -65,15 +65,24 @@ npm run dev
 - Web app: `http://localhost:5173`
 - API server: `http://localhost:3001`
 
+For database-backed local development, use the Supabase CLI stack:
+
+```bash
+npm run db:start
+npm run db:reset
+pnpm dev
+```
+
 Useful commands:
 
 ```bash
 npm run build
 npm run start
+npm run db:start
+npm run db:reset
 npm run lint
 npm run typecheck
 npm run test
-npm run test:e2e
 ```
 
 ## Workspace Storage

@@ -1,5 +1,8 @@
 import { buildApp } from "./app.js";
+import { loadRootEnv } from "./lib/env.js";
 import { startOutboxWorker, stopOutboxWorker } from "./lib/outbox-worker.js";
+
+loadRootEnv();
 
 const port = Number(process.env.PORT ?? 3001);
 const host = process.env.HOST ?? "0.0.0.0";

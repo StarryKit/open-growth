@@ -4,10 +4,12 @@ import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
 import statik from "@fastify/static";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
+import {
+  getAssetType,
+  isSupportedAsset,
+} from "../../../packages/db/src/content-assets.js";
 import { resolveAuthContext } from "./lib/auth-service.js";
 import { listConnectorCapabilities } from "./lib/connector-service.js";
-import { getAssetType, isSupportedAsset } from "./lib/content-assets.js";
-import { sanitizeFilename } from "./lib/content-server.js";
 import type { DomainContext } from "./lib/domain-store.js";
 import {
   createContentAsset,
@@ -39,8 +41,6 @@ import {
   upsertConnectorAccount,
 } from "./lib/domain-store.js";
 import {
-  deleteLocalMediaObject,
-  readLocalMediaObject,
   readSupabaseMediaObject,
   saveMediaObject,
 } from "./lib/media-storage.js";
@@ -266,88 +266,7 @@ export async function buildApp() {
     },
   );
 
-  app.get<{ Querystring: { filename?: string } }>(
-    "/api/upload",
-    async (request, reply) => {
-      try {
-        const context = await resolveDomainContext(request, reply);
-        if (!context) return;
-
-        if (request.query.filename) {
-          const safeFilename = sanitizeFilename(request.query.filename);
-          const media = await readLocalMediaObject(safeFilename);
-          const extension = extname(safeFilename).toLowerCase();
-
-          reply.header("Cache-Control", "no-store");
-          reply.header("Content-Length", media.size.toString());
-          reply.header(
-            "Content-Type",
-            contentTypes.get(extension) ?? "application/octet-stream",
-          );
-
-          return reply.send(media.stream);
-        }
-
-        const assets = await listContentAssets(context);
-        return { assets };
-      } catch (error) {
-        if (
-          error &&
-          typeof error === "object" &&
-          "code" in error &&
-          error.code === "ENOENT"
-        ) {
-          return reply.code(404).send({ error: "File not found." });
-        }
-
-        return reply
-          .code(500)
-          .send({ error: "Unable to read content assets." });
-      }
-    },
-  );
-
-  app.post("/api/upload", handleContentAssetUpload);
-
   app.post("/api/content-assets", handleContentAssetUpload);
-
-  app.delete<{ Querystring: { filename?: string } }>(
-    "/api/upload",
-    async (request, reply) => {
-      if (!request.query.filename) {
-        return reply.code(400).send({ error: "Missing filename." });
-      }
-
-      try {
-        const context = await resolveDomainContext(request, reply);
-        if (!context) return;
-
-        const assets = await listContentAssets(context);
-        const asset = assets.find(
-          (candidate) => candidate.filename === request.query.filename,
-        );
-
-        if (asset?.id) {
-          await deleteContentAsset(asset.id, context);
-        } else {
-          await deleteLocalMediaObject(request.query.filename);
-        }
-
-        return { success: true };
-      } catch (error) {
-        if (
-          error &&
-          typeof error === "object" &&
-          "code" in error &&
-          error.code === "ENOENT"
-        ) {
-          return reply.code(404).send({ error: "File not found." });
-        }
-
-        return reply.code(500).send({ error: "Unable to delete file." });
-      }
-    },
-  );
 
   app.get("/api/content-assets", async (request, reply) => {
     const context = await resolveDomainContext(request, reply);
@@ -378,14 +297,6 @@ export async function buildApp() {
       const extension = extname(asset.filename).toLowerCase();
       const contentType =
         contentTypes.get(extension) ?? "application/octet-stream";
-
-      if (asset.path.startsWith("content/")) {
-        const media = await readLocalMediaObject(asset.filename);
-        reply.header("Cache-Control", "no-store");
-        reply.header("Content-Length", media.size.toString());
-        reply.header("Content-Type", contentType);
-        return reply.send(media.stream);
-      }
 
       const buffer = await readSupabaseMediaObject(asset.path);
       if (!buffer) {

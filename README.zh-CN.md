@@ -53,7 +53,7 @@ open-growth/
 - 前端: React 19、React Router 7、Vite 6
 - 后端: Fastify 5，支持 multipart 上传、静态资源服务与 CORS
 - 共享层: `packages/shared`
-- 工程化: TypeScript、Biome、Vitest、Playwright
+- 工程化: TypeScript、Biome、Vitest
 
 ## 本地开发
 
@@ -65,15 +65,24 @@ npm run dev
 - 前端地址: `http://localhost:5173`
 - 后端地址: `http://localhost:3001`
 
+如果你要跑数据库驱动的本地开发，先启动 Supabase CLI：
+
+```bash
+npm run db:start
+npm run db:reset
+pnpm dev
+```
+
 常用命令:
 
 ```bash
 npm run build
 npm run start
+npm run db:start
+npm run db:reset
 npm run lint
 npm run typecheck
 npm run test
-npm run test:e2e
 ```
 
 ## 工作区存储

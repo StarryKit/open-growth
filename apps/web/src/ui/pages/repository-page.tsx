@@ -19,7 +19,9 @@ export function RepositoryPage() {
       setError(null);
 
       try {
-        const data = await apiJson<{ assets: ContentAsset[] }>("/api/upload");
+        const data = await apiJson<{ assets: ContentAsset[] }>(
+          "/api/content-assets",
+        );
 
         if (!cancelled) {
           setAssets(data.assets);
