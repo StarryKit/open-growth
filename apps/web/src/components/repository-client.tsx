@@ -1,16 +1,20 @@
 "use client";
 
-import type { ContentAsset, WorkspaceProject } from "@shared";
+import type { ContentAsset, ContentAssetKind, WorkspaceProject } from "@shared";
 import {
   FileText,
   Film,
   Image as ImageIcon,
   Loader2,
+  Search,
+  Send,
+  SlidersHorizontal,
   Trash2,
   UploadCloud,
 } from "lucide-react";
 import type { ChangeEvent, DragEvent } from "react";
-import { useCallback, useRef, useState, useTransition } from "react";
+import { useCallback, useMemo, useRef, useState, useTransition } from "react";
+import { apiJson } from "@/ui/lib/api";
 
 type RepositoryClientProps = {
   initialAssets: ContentAsset[];
@@ -26,6 +30,18 @@ type UploadResponse = {
 
 const supportedTypes =
   ".png,.jpg,.jpeg,.gif,.webp,.svg,.mp4,.webm,.txt,.md,.json";
+const typeFilters: Array<"all" | ContentAssetKind> = [
+  "all",
+  "image",
+  "video",
+  "text",
+];
+const sortOptions = [
+  { label: "Updated", value: "updated" },
+  { label: "Size", value: "size" },
+  { label: "Usage", value: "usage" },
+] as const;
+const platformOptions = ["x", "reddit", "wechat"] as const;
 
 function formatBytes(size: number): string {
   if (size < 1024) {
@@ -46,7 +62,11 @@ function AssetPreview({ asset }: { asset: ContentAsset }) {
         <img
           alt={asset.filename}
           className="size-full object-cover"
-          src={`/api/upload?filename=${encodeURIComponent(asset.filename)}`}
+          src={
+            asset.id
+              ? `/api/content-assets/${asset.id}/blob`
+              : `/api/upload?filename=${encodeURIComponent(asset.filename)}`
+          }
         />
       </div>
     );
@@ -88,20 +108,71 @@ export function RepositoryClient({
   activeProject,
 }: RepositoryClientProps) {
   const [assets, setAssets] = useState<ContentAsset[]>(initialAssets);
+  const [selectedAssetId, setSelectedAssetId] = useState<string | null>(
+    initialAssets[0]?.id ?? null,
+  );
+  const [query, setQuery] = useState("");
+  const [typeFilter, setTypeFilter] =
+    useState<(typeof typeFilters)[number]>("all");
+  const [tagFilter, setTagFilter] = useState("all");
+  const [sortBy, setSortBy] =
+    useState<(typeof sortOptions)[number]["value"]>("updated");
   const [isDragging, setIsDragging] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const inputRef = useRef<HTMLInputElement>(null);
 
+  const tags = useMemo(
+    () =>
+      [...new Set(assets.flatMap((asset) => asset.tags ?? []))]
+        .filter(Boolean)
+        .sort((a, b) => a.localeCompare(b)),
+    [assets],
+  );
+
+  const visibleAssets = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+
+    return assets
+      .filter((asset) => {
+        const matchesType = typeFilter === "all" || asset.type === typeFilter;
+        const matchesTag =
+          tagFilter === "all" || (asset.tags ?? []).includes(tagFilter);
+        const searchable = [
+          asset.filename,
+          asset.title,
+          asset.description,
+          asset.preview,
+          ...(asset.tags ?? []),
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        const matchesQuery =
+          normalizedQuery.length === 0 || searchable.includes(normalizedQuery);
+
+        return matchesType && matchesTag && matchesQuery;
+      })
+      .sort((a, b) => {
+        if (sortBy === "size") return b.size - a.size;
+        if (sortBy === "usage")
+          return (b.usageCount ?? 0) - (a.usageCount ?? 0);
+        return b.updatedAt.localeCompare(a.updatedAt);
+      });
+  }, [assets, query, sortBy, tagFilter, typeFilter]);
+
+  const selectedAsset = useMemo(
+    () =>
+      visibleAssets.find((asset) => asset.id === selectedAssetId) ??
+      visibleAssets[0] ??
+      null,
+    [selectedAssetId, visibleAssets],
+  );
+
   const refreshAssets = useCallback(async () => {
-    const response = await fetch("/api/upload", { cache: "no-store" });
-
-    if (!response.ok) {
-      throw new Error("Failed to load assets.");
-    }
-
-    const data = (await response.json()) as { assets: ContentAsset[] };
+    const data = await apiJson<{ assets: ContentAsset[] }>("/api/upload");
     setAssets(data.assets);
+    setSelectedAssetId((current) => current ?? data.assets[0]?.id ?? null);
   }, []);
 
   const uploadFiles = useCallback(
@@ -120,19 +191,11 @@ export function RepositoryClient({
             const formData = new FormData();
             formData.append("file", file);
 
-            const response = await fetch("/api/upload", {
+            await apiJson<UploadResponse>("/api/upload", {
               method: "POST",
               body: formData,
+              headers: {},
             });
-
-            if (!response.ok) {
-              const data = (await response.json().catch(() => null)) as {
-                error?: string;
-              } | null;
-              throw new Error(data?.error || `Failed to upload ${file.name}.`);
-            }
-
-            (await response.json()) as UploadResponse;
           }
 
           await refreshAssets();
@@ -163,31 +226,99 @@ export function RepositoryClient({
     uploadFiles(event.dataTransfer.files);
   };
 
-  const deleteAsset = (filename: string) => {
+  const deleteAsset = (asset: ContentAsset) => {
     startTransition(async () => {
       setMessage(null);
 
       try {
-        const response = await fetch(
-          `/api/upload?filename=${encodeURIComponent(filename)}`,
+        await apiJson<{ success: boolean }>(
+          `/api/upload?filename=${encodeURIComponent(asset.filename)}`,
           {
             method: "DELETE",
           },
         );
 
-        if (!response.ok) {
-          const data = (await response.json().catch(() => null)) as {
-            error?: string;
-          } | null;
-          throw new Error(data?.error || `Failed to delete ${filename}.`);
-        }
-
         setAssets((currentAssets) =>
-          currentAssets.filter((asset) => asset.filename !== filename),
+          currentAssets.filter(
+            (candidate) => candidate.filename !== asset.filename,
+          ),
         );
-        setMessage(`${filename} deleted.`);
+        setSelectedAssetId((current) =>
+          current === asset.id ? null : current,
+        );
+        setMessage(`${asset.filename} deleted.`);
       } catch (error) {
         setMessage(error instanceof Error ? error.message : "Delete failed.");
+      }
+    });
+  };
+
+  const createDraftFromAsset = (asset: ContentAsset) => {
+    startTransition(async () => {
+      setMessage(null);
+
+      try {
+        await apiJson("/api/published-content", {
+          method: "POST",
+          body: JSON.stringify({
+            title: asset.title || asset.filename,
+            body:
+              asset.preview ||
+              asset.description ||
+              `Prepare a platform-ready post using ${asset.filename}.`,
+            assetIds: asset.id ? [asset.id] : [],
+            platforms: asset.platforms?.length
+              ? asset.platforms
+              : ["x", "reddit", "wechat"],
+          }),
+        });
+
+        setMessage(`Draft created from ${asset.filename}.`);
+      } catch (error) {
+        setMessage(
+          error instanceof Error ? error.message : "Failed to create draft.",
+        );
+      }
+    });
+  };
+
+  const saveMetadata = (asset: ContentAsset, formData: FormData) => {
+    if (!asset.id) return;
+
+    startTransition(async () => {
+      setMessage(null);
+
+      try {
+        const tagsValue = String(formData.get("tags") ?? "");
+        const platforms = platformOptions.filter(
+          (platform) => formData.get(platform) === "on",
+        );
+        const result = await apiJson<{ asset: ContentAsset }>(
+          `/api/content-assets/${asset.id}`,
+          {
+            method: "PATCH",
+            body: JSON.stringify({
+              title: String(formData.get("title") ?? ""),
+              description: String(formData.get("description") ?? ""),
+              source: String(formData.get("source") ?? ""),
+              tags: tagsValue
+                .split(",")
+                .map((tag) => tag.trim())
+                .filter(Boolean),
+              platforms,
+            }),
+          },
+        );
+
+        setAssets((current) =>
+          current.map((candidate) =>
+            candidate.id === result.asset.id ? result.asset : candidate,
+          ),
+        );
+        setSelectedAssetId(result.asset.id ?? null);
+        setMessage("Asset metadata saved.");
+      } catch (error) {
+        setMessage(error instanceof Error ? error.message : "Save failed.");
       }
     });
   };
@@ -273,11 +404,64 @@ export function RepositoryClient({
       </label>
 
       <section className="mt-8">
-        <div className="mb-4 flex items-center justify-between">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-xl font-semibold">Uploaded assets</h2>
-          <p className="text-sm text-slate-500 dark:text-slate-400">
-            Sorted by latest update
-          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="relative">
+              <Search
+                aria-hidden="true"
+                className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400"
+              />
+              <input
+                aria-label="Search assets"
+                className="h-10 w-64 rounded-lg border border-slate-200 bg-white pl-9 pr-3 text-sm outline-none focus:border-cyan-300 dark:border-slate-800 dark:bg-slate-900"
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search filename, tags, preview"
+                value={query}
+              />
+            </label>
+            <select
+              aria-label="Filter asset type"
+              className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm dark:border-slate-800 dark:bg-slate-900"
+              onChange={(event) =>
+                setTypeFilter(event.target.value as typeof typeFilter)
+              }
+              value={typeFilter}
+            >
+              {typeFilters.map((type) => (
+                <option key={type} value={type}>
+                  {type === "all" ? "All types" : type}
+                </option>
+              ))}
+            </select>
+            <select
+              aria-label="Filter asset tag"
+              className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm dark:border-slate-800 dark:bg-slate-900"
+              onChange={(event) => setTagFilter(event.target.value)}
+              value={tagFilter}
+            >
+              <option value="all">All tags</option>
+              {tags.map((tag) => (
+                <option key={tag} value={tag}>
+                  {tag}
+                </option>
+              ))}
+            </select>
+            <select
+              aria-label="Sort assets"
+              className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm dark:border-slate-800 dark:bg-slate-900"
+              onChange={(event) =>
+                setSortBy(event.target.value as typeof sortBy)
+              }
+              value={sortBy}
+            >
+              {sortOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  Sort by {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
         {assets.length === 0 ? (
@@ -293,40 +477,165 @@ export function RepositoryClient({
               </p>
             </div>
           </div>
+        ) : visibleAssets.length === 0 ? (
+          <div className="grid min-h-64 place-items-center rounded-xl border border-dashed border-slate-300 bg-white text-center text-slate-500 dark:border-slate-700 dark:bg-slate-900">
+            <div>
+              <SlidersHorizontal
+                aria-hidden="true"
+                className="mx-auto size-9"
+              />
+              <p className="mt-3 font-medium">No matching assets</p>
+            </div>
+          </div>
         ) : (
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-            {assets.map((asset) => (
-              <article
-                key={asset.filename}
-                className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md dark:border-slate-800 dark:bg-slate-900"
-              >
-                <AssetPreview asset={asset} />
-                <div className="p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <h3
-                        className="truncate text-sm font-semibold"
-                        title={asset.filename}
-                      >
-                        {asset.filename}
-                      </h3>
-                      <p className="mt-1 text-xs uppercase tracking-[0.16em] text-slate-500">
-                        {asset.type} · {formatBytes(asset.size)}
-                      </p>
+          <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+            <div className="grid content-start gap-4 sm:grid-cols-2 2xl:grid-cols-3">
+              {visibleAssets.map((asset) => (
+                <article
+                  key={asset.id ?? asset.filename}
+                  className={[
+                    "overflow-hidden rounded-xl border bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md dark:bg-slate-900",
+                    selectedAsset?.id === asset.id
+                      ? "border-cyan-300 ring-4 ring-cyan-300/15 dark:border-cyan-800"
+                      : "border-slate-200 dark:border-slate-800",
+                  ].join(" ")}
+                >
+                  <button
+                    className="block w-full text-left"
+                    onClick={() => setSelectedAssetId(asset.id ?? null)}
+                    type="button"
+                  >
+                    <AssetPreview asset={asset} />
+                  </button>
+                  <div className="p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <h3
+                          className="truncate text-sm font-semibold"
+                          title={asset.filename}
+                        >
+                          {asset.title || asset.filename}
+                        </h3>
+                        <p className="mt-1 text-xs uppercase tracking-[0.16em] text-slate-500">
+                          {asset.type} · {formatBytes(asset.size)}
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 gap-2">
+                        <button
+                          aria-label={`Create draft from ${asset.filename}`}
+                          className="grid size-9 place-items-center rounded-lg border border-cyan-200 text-cyan-700 transition hover:bg-cyan-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-cyan-900/70 dark:text-cyan-300 dark:hover:bg-cyan-950"
+                          disabled={isPending}
+                          onClick={() => createDraftFromAsset(asset)}
+                          type="button"
+                        >
+                          <Send aria-hidden="true" className="size-4" />
+                        </button>
+                        <button
+                          aria-label={`Delete ${asset.filename}`}
+                          className="grid size-9 place-items-center rounded-lg border border-rose-200 text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-900/70 dark:text-rose-300 dark:hover:bg-rose-950"
+                          disabled={isPending}
+                          onClick={() => deleteAsset(asset)}
+                          type="button"
+                        >
+                          <Trash2 aria-hidden="true" className="size-4" />
+                        </button>
+                      </div>
                     </div>
-                    <button
-                      aria-label={`Delete ${asset.filename}`}
-                      className="grid size-9 shrink-0 place-items-center rounded-lg border border-rose-200 text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-900/70 dark:text-rose-300 dark:hover:bg-rose-950"
-                      disabled={isPending}
-                      onClick={() => deleteAsset(asset.filename)}
-                      type="button"
-                    >
-                      <Trash2 aria-hidden="true" className="size-4" />
-                    </button>
+                    {(asset.tags ?? []).length > 0 ? (
+                      <div className="mt-3 flex flex-wrap gap-1.5">
+                        {(asset.tags ?? []).slice(0, 4).map((tag) => (
+                          <span
+                            key={tag}
+                            className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
-                </div>
-              </article>
-            ))}
+                </article>
+              ))}
+            </div>
+
+            {selectedAsset ? (
+              <aside className="h-fit rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+                <h3 className="text-lg font-semibold">Asset details</h3>
+                <p className="mt-1 truncate text-sm text-slate-500">
+                  {selectedAsset.filename}
+                </p>
+                <form
+                  className="mt-5 space-y-4"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    saveMetadata(
+                      selectedAsset,
+                      new FormData(event.currentTarget),
+                    );
+                  }}
+                >
+                  <label className="block">
+                    <span className="text-sm font-medium">Title</span>
+                    <input
+                      className="mt-1 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm dark:border-slate-800 dark:bg-slate-950"
+                      defaultValue={selectedAsset.title ?? ""}
+                      name="title"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-sm font-medium">Description</span>
+                    <textarea
+                      className="mt-1 min-h-24 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-800 dark:bg-slate-950"
+                      defaultValue={selectedAsset.description ?? ""}
+                      name="description"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-sm font-medium">Tags</span>
+                    <input
+                      className="mt-1 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm dark:border-slate-800 dark:bg-slate-950"
+                      defaultValue={(selectedAsset.tags ?? []).join(", ")}
+                      name="tags"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-sm font-medium">Source</span>
+                    <input
+                      className="mt-1 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm dark:border-slate-800 dark:bg-slate-950"
+                      defaultValue={selectedAsset.source ?? ""}
+                      name="source"
+                    />
+                  </label>
+                  <fieldset>
+                    <legend className="text-sm font-medium">Platforms</legend>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {platformOptions.map((platform) => (
+                        <label
+                          className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm dark:border-slate-800"
+                          key={platform}
+                        >
+                          <input
+                            defaultChecked={(
+                              selectedAsset.platforms ?? []
+                            ).includes(platform)}
+                            name={platform}
+                            type="checkbox"
+                          />
+                          {platform}
+                        </label>
+                      ))}
+                    </div>
+                  </fieldset>
+                  <button
+                    className="h-10 w-full rounded-lg bg-slate-950 px-4 text-sm font-semibold text-white disabled:opacity-60 dark:bg-white dark:text-slate-950"
+                    disabled={isPending}
+                    type="submit"
+                  >
+                    Save metadata
+                  </button>
+                </form>
+              </aside>
+            ) : null}
           </div>
         )}
       </section>

@@ -7,6 +7,7 @@ import {
   ChevronDown,
   Folder,
   Home,
+  Link2,
   Loader2,
   type LucideIcon,
   Plus,
@@ -17,7 +18,9 @@ import {
 import type { FormEvent } from "react";
 import { useState, useTransition } from "react";
 import { NavLink, useLocation } from "react-router-dom";
+import { useAuth } from "@/state/auth-context";
 import { useWorkspace } from "@/state/workspace-context";
+import { apiJson } from "@/ui/lib/api";
 
 type NavItem = {
   label: string;
@@ -31,6 +34,7 @@ type ProjectResponse = {
 
 const navItems: NavItem[] = [
   { label: "Dashboard", href: "/", icon: Home },
+  { label: "Connectors", href: "/connectors", icon: Link2 },
   { label: "Content Repository", href: "/repository", icon: Folder },
   { label: "Publish", href: "/publish", icon: Send },
   { label: "Tracking", href: "/tracking", icon: BarChart3 },
@@ -39,6 +43,7 @@ const navItems: NavItem[] = [
 
 export function Sidebar() {
   const location = useLocation();
+  const auth = useAuth();
   const { projects, activeProject, loading, setWorkspace } = useWorkspace();
   const [isSwitcherOpen, setIsSwitcherOpen] = useState(false);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -58,20 +63,11 @@ export function Sidebar() {
       setError(null);
 
       try {
-        const response = await fetch("/api/projects/active", {
+        const data = await apiJson<ProjectResponse>("/api/projects/active", {
           method: "PUT",
-          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ projectId: project.id }),
         });
 
-        if (!response.ok) {
-          const data = (await response.json().catch(() => null)) as {
-            error?: string;
-          } | null;
-          throw new Error(data?.error || "Unable to switch project.");
-        }
-
-        const data = (await response.json()) as ProjectResponse;
         setWorkspace({ projects, activeProject: data.project });
         setIsSwitcherOpen(false);
       } catch (projectError) {
@@ -91,20 +87,11 @@ export function Sidebar() {
       setError(null);
 
       try {
-        const response = await fetch("/api/projects", {
+        const data = await apiJson<ProjectResponse>("/api/projects", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ name: projectName }),
         });
 
-        if (!response.ok) {
-          const data = (await response.json().catch(() => null)) as {
-            error?: string;
-          } | null;
-          throw new Error(data?.error || "Unable to create project.");
-        }
-
-        const data = (await response.json()) as ProjectResponse;
         setWorkspace({
           projects: [...projects, data.project],
           activeProject: data.project,
@@ -250,6 +237,15 @@ export function Sidebar() {
           <p className="mt-2 text-sm text-slate-300">
             Content, signals, and publishing in one workspace.
           </p>
+          {auth.mode === "supabase" ? (
+            <button
+              className="mt-4 h-9 rounded-lg border border-white/10 px-3 text-sm font-semibold text-slate-200 transition hover:bg-white/8"
+              onClick={() => void auth.signOut()}
+              type="button"
+            >
+              Sign out
+            </button>
+          ) : null}
         </div>
       </aside>
 

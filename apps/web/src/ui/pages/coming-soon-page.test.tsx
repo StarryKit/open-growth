@@ -10,9 +10,6 @@ describe("ComingSoonPage", () => {
     expect(
       screen.getByRole("heading", { name: "Publish" }),
     ).toBeInTheDocument();
-    expect(screen.getByText(/coming soon/i)).toBeInTheDocument();
-    expect(
-      screen.getByText(/reserved for the next open growth workflow/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/workspace module/i)).toBeInTheDocument();
   });
 });

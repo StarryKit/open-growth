@@ -3,6 +3,7 @@ import { Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { RepositoryClient } from "@/components/repository-client";
 import { useWorkspace } from "@/state/workspace-context";
+import { apiJson } from "@/ui/lib/api";
 
 export function RepositoryPage() {
   const { activeProject, loading: workspaceLoading } = useWorkspace();
@@ -18,13 +19,7 @@ export function RepositoryPage() {
       setError(null);
 
       try {
-        const response = await fetch("/api/upload", { cache: "no-store" });
-
-        if (!response.ok) {
-          throw new Error("Failed to load assets.");
-        }
-
-        const data = (await response.json()) as { assets: ContentAsset[] };
+        const data = await apiJson<{ assets: ContentAsset[] }>("/api/upload");
 
         if (!cancelled) {
           setAssets(data.assets);

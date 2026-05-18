@@ -1,6 +1,8 @@
 import type { WorkspaceProject } from "@shared";
 import type { ReactNode } from "react";
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { useAuth } from "@/state/auth-context";
+import { apiJson, configureApiAuth, configureApiProject } from "@/ui/lib/api";
 
 type WorkspaceState = {
   projects: WorkspaceProject[];
@@ -16,19 +18,14 @@ type WorkspaceState = {
 const WorkspaceContext = createContext<WorkspaceState | null>(null);
 
 async function fetchWorkspace() {
-  const response = await fetch("/api/projects", { cache: "no-store" });
-
-  if (!response.ok) {
-    throw new Error("Failed to load workspace.");
-  }
-
-  return (await response.json()) as {
+  return apiJson<{
     projects: WorkspaceProject[];
     activeProject: WorkspaceProject | null;
-  };
+  }>("/api/projects");
 }
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
+  const auth = useAuth();
   const [projects, setProjects] = useState<WorkspaceProject[]>([]);
   const [activeProject, setActiveProject] = useState<WorkspaceProject | null>(
     null,
@@ -48,8 +45,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
+    configureApiAuth(auth.accessToken);
     void reloadWorkspace();
-  }, []);
+  }, [auth.accessToken]);
+
+  useEffect(() => {
+    configureApiProject(() => activeProject?.id ?? null);
+    return () => configureApiProject(null);
+  }, [activeProject?.id]);
 
   const value = useMemo<WorkspaceState>(
     () => ({

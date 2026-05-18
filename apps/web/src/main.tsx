@@ -1,6 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
+import { AuthProvider } from "@/state/auth-context";
 import { WorkspaceProvider } from "@/state/workspace-context";
 import { App } from "@/ui/app";
 import "@/styles/globals.css";
@@ -14,9 +15,11 @@ if (!container) {
 createRoot(container).render(
   <StrictMode>
     <BrowserRouter>
-      <WorkspaceProvider>
-        <App />
-      </WorkspaceProvider>
+      <AuthProvider>
+        <WorkspaceProvider>
+          <App />
+        </WorkspaceProvider>
+      </AuthProvider>
     </BrowserRouter>
   </StrictMode>,
 );

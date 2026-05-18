@@ -11,3 +11,4 @@ Architecture decisions for this repo live here.
 ## Index
 
 - [ADR-0001: Record the current workspace architecture](./0001-current-workspace-architecture.md)
+- [ADR-0002: Supabase domain storage, media, and outbox boundaries](./0002-supabase-domain-storage-and-outbox.md)

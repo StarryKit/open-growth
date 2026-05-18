@@ -3,6 +3,13 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { WorkspaceProject } from "../../../../packages/shared/src/workspace.js";
+import {
+  deleteDatabaseProject,
+  insertDatabaseProject,
+  listDatabaseProjects,
+  type StoreContext,
+} from "./database-store.js";
+import { dataDirectory, readJsonFile, writeJsonFile } from "./json-store.js";
 
 /** All workspace projects live under ~/.open-growth/ */
 export const WORKSPACE_ROOT = path.join(os.homedir(), ".open-growth");
@@ -25,33 +32,10 @@ type ActiveProjectStore = {
   activeProjectId: string | null;
 };
 
-const dataDirectory = path.join(process.cwd(), "data");
 const projectsFilePath = path.join(dataDirectory, "projects.json");
 const activeProjectFilePath = path.join(dataDirectory, "active-project.json");
 
 const emptyProjectStore: ProjectStore = { projects: [] };
-
-async function readJsonFile<T>(filePath: string, fallback: T): Promise<T> {
-  try {
-    const contents = await fs.readFile(filePath, "utf8");
-    return JSON.parse(contents) as T;
-  } catch (error) {
-    if (
-      error &&
-      typeof error === "object" &&
-      "code" in error &&
-      error.code === "ENOENT"
-    ) {
-      return fallback;
-    }
-
-    if (error instanceof SyntaxError) {
-      return fallback;
-    }
-
-    throw error;
-  }
-}
 
 function isWorkspaceProject(value: unknown): value is WorkspaceProject {
   if (!value || typeof value !== "object") {
@@ -82,12 +66,7 @@ async function readProjectStore(): Promise<ProjectStore> {
 }
 
 async function writeProjectStore(store: ProjectStore) {
-  await fs.mkdir(dataDirectory, { recursive: true });
-  await fs.writeFile(
-    projectsFilePath,
-    `${JSON.stringify(store, null, 2)}\n`,
-    "utf8",
-  );
+  await writeJsonFile(projectsFilePath, store);
 }
 
 async function readActiveProjectStore(): Promise<ActiveProjectStore> {
@@ -105,23 +84,26 @@ async function readActiveProjectStore(): Promise<ActiveProjectStore> {
 }
 
 async function writeActiveProjectStore(activeProjectId: string | null) {
-  await fs.mkdir(dataDirectory, { recursive: true });
-  await fs.writeFile(
-    activeProjectFilePath,
-    `${JSON.stringify({ activeProjectId }, null, 2)}\n`,
-    "utf8",
-  );
+  await writeJsonFile(activeProjectFilePath, { activeProjectId });
 }
 
-export async function listProjects(): Promise<WorkspaceProject[]> {
+export async function listProjects(
+  context?: StoreContext,
+): Promise<WorkspaceProject[]> {
+  const databaseProjects = await listDatabaseProjects(context);
+  if (databaseProjects) {
+    return databaseProjects;
+  }
+
   const store = await readProjectStore();
   return store.projects;
 }
 
 export async function getProjectById(
   projectId: string,
+  context?: StoreContext,
 ): Promise<WorkspaceProject | null> {
-  const projects = await listProjects();
+  const projects = await listProjects(context);
   return projects.find((project) => project.id === projectId) ?? null;
 }
 
@@ -130,20 +112,30 @@ export async function getActiveProjectId(): Promise<string | null> {
   return store.activeProjectId;
 }
 
-export async function getActiveProject(): Promise<WorkspaceProject | null> {
+export async function getActiveProject(
+  context?: StoreContext,
+): Promise<WorkspaceProject | null> {
   const [projects, activeProjectId] = await Promise.all([
-    listProjects(),
+    listProjects(context),
     getActiveProjectId(),
   ]);
 
   if (!activeProjectId) {
-    return null;
+    return projects[0] ?? null;
   }
 
   return projects.find((project) => project.id === activeProjectId) ?? null;
 }
 
-export async function createProject(input: { name: string }) {
+export async function createProject(
+  input: { name: string },
+  context?: StoreContext,
+) {
+  const databaseProject = await insertDatabaseProject(input, context);
+  if (databaseProject) {
+    return databaseProject;
+  }
+
   const rootDir = getWorkspaceDir(input.name);
 
   await fs.mkdir(rootDir, { recursive: true });
@@ -155,7 +147,7 @@ export async function createProject(input: { name: string }) {
     createdAt: new Date().toISOString(),
   };
 
-  const projects = await listProjects();
+  const projects = await listProjects(context);
   const nextProjects = [...projects, project];
 
   await writeProjectStore({ projects: nextProjects });
@@ -164,8 +156,16 @@ export async function createProject(input: { name: string }) {
   return project;
 }
 
-export async function deleteProject(projectId: string): Promise<boolean> {
-  const projects = await listProjects();
+export async function deleteProject(
+  projectId: string,
+  context?: StoreContext,
+): Promise<boolean> {
+  const databaseRemoved = await deleteDatabaseProject(projectId, context);
+  if (databaseRemoved !== null) {
+    return databaseRemoved;
+  }
+
+  const projects = await listProjects(context);
   const nextProjects = projects.filter((project) => project.id !== projectId);
 
   if (nextProjects.length === projects.length) {
@@ -184,13 +184,14 @@ export async function deleteProject(projectId: string): Promise<boolean> {
 
 export async function setActiveProject(
   projectId: string | null,
+  context?: StoreContext,
 ): Promise<WorkspaceProject | null> {
   if (!projectId) {
     await writeActiveProjectStore(null);
     return null;
   }
 
-  const project = await getProjectById(projectId);
+  const project = await getProjectById(projectId, context);
 
   if (!project) {
     return null;
