@@ -5,9 +5,11 @@ import {
   BarChart3,
   Check,
   ChevronDown,
+  ChevronsUpDown,
   Folder,
   Link2,
   Loader2,
+  LogOut,
   type LucideIcon,
   Plus,
   Send,
@@ -17,6 +19,15 @@ import {
 import type { FormEvent } from "react";
 import { useState, useTransition } from "react";
 import { NavLink, useLocation } from "react-router-dom";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useAuth } from "@/state/auth-context";
 import { useWorkspace } from "@/state/workspace-context";
 import { apiJson } from "@/ui/lib/api";
@@ -39,6 +50,57 @@ const navItems: NavItem[] = [
   { label: "Trends", href: "/trends", icon: TrendingUp },
 ];
 
+function userMetadataValue(
+  metadata: Record<string, unknown> | undefined,
+  key: string,
+) {
+  const value = metadata?.[key];
+
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim()
+    : null;
+}
+
+function getUserDisplayName(auth: ReturnType<typeof useAuth>) {
+  const metadata = auth.session?.user.user_metadata;
+  const fullName =
+    userMetadataValue(metadata, "full_name") ??
+    userMetadataValue(metadata, "name");
+
+  if (fullName) {
+    return fullName;
+  }
+
+  return auth.session?.user.email ?? "Local Developer";
+}
+
+function getUserAvatarUrl(auth: ReturnType<typeof useAuth>) {
+  const metadata = auth.session?.user.user_metadata;
+
+  return (
+    userMetadataValue(metadata, "avatar_url") ??
+    userMetadataValue(metadata, "picture")
+  );
+}
+
+function getUserInitials(name: string, email?: string) {
+  const source = name === email && email ? email.split("@")[0] : name;
+  const parts = source
+    .split(/[\s._-]+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (parts.length === 0) {
+    return "OG";
+  }
+
+  return parts
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase();
+}
+
 export function Sidebar() {
   const location = useLocation();
   const auth = useAuth();
@@ -47,9 +109,31 @@ export function Sidebar() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [projectName, setProjectName] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [accountError, setAccountError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+  const [isSigningOut, startSignOutTransition] = useTransition();
 
   const activeProjectName = activeProject?.name ?? "Open Growth";
+  const userName = getUserDisplayName(auth);
+  const userEmail = auth.session?.user.email;
+  const userAvatarUrl = getUserAvatarUrl(auth);
+  const userInitials = getUserInitials(userName, userEmail);
+
+  const signOut = () => {
+    startSignOutTransition(async () => {
+      setAccountError(null);
+
+      try {
+        await auth.signOut();
+      } catch (signOutError) {
+        setAccountError(
+          signOutError instanceof Error
+            ? signOutError.message
+            : "Unable to log out.",
+        );
+      }
+    });
+  };
 
   const switchProject = (project: WorkspaceProject) => {
     if (project.id === activeProject?.id) {
@@ -228,22 +312,68 @@ export function Sidebar() {
           })}
         </nav>
 
-        <div className="border-t border-white/10 px-6 py-5">
-          <p className="text-xs font-medium uppercase tracking-[0.18em] text-slate-500">
-            Growth OS
-          </p>
-          <p className="mt-2 text-sm text-slate-300">
-            Content, signals, and publishing in one workspace.
-          </p>
-          {auth.mode === "supabase" ? (
-            <button
-              className="mt-4 h-9 rounded-lg border border-white/10 px-3 text-sm font-semibold text-slate-200 transition hover:bg-white/8"
-              onClick={() => void auth.signOut()}
-              type="button"
+        <div className="border-t border-white/10 p-3">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                className="flex h-14 w-full items-center gap-3 rounded-lg px-3 text-left transition hover:bg-white/8 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/50 data-[state=open]:bg-white/8"
+                type="button"
+              >
+                <Avatar className="size-10 border border-white/10 bg-slate-800">
+                  {userAvatarUrl ? (
+                    <AvatarImage alt={userName} src={userAvatarUrl} />
+                  ) : null}
+                  <AvatarFallback className="bg-gradient-to-br from-amber-300 to-rose-300 text-sm font-black text-slate-950">
+                    {userInitials}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold text-slate-100">
+                    {userName}
+                  </p>
+                  <p className="truncate text-xs text-slate-400">
+                    {userEmail ?? "Local workspace"}
+                  </p>
+                </div>
+                <ChevronsUpDown
+                  aria-hidden="true"
+                  className="size-4 shrink-0 text-slate-500"
+                />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="start"
+              className="w-56 border-white/10 bg-slate-900 text-slate-100 shadow-2xl shadow-slate-950/70"
+              side="top"
+              sideOffset={10}
             >
-              Sign out
-            </button>
-          ) : null}
+              <DropdownMenuLabel className="p-2">
+                <span className="block truncate text-sm font-semibold">
+                  {userName}
+                </span>
+                <span className="mt-0.5 block truncate text-xs font-normal text-slate-400">
+                  {userEmail ?? "Local workspace"}
+                </span>
+              </DropdownMenuLabel>
+              {accountError ? (
+                <p className="mx-1 rounded-md border border-rose-400/20 bg-rose-500/10 px-2 py-1.5 text-xs text-rose-100">
+                  {accountError}
+                </p>
+              ) : null}
+              <DropdownMenuSeparator className="bg-white/10" />
+              <DropdownMenuItem
+                className="cursor-pointer text-rose-200 focus:bg-rose-500/10 focus:text-rose-100"
+                disabled={auth.mode !== "supabase" || isSigningOut}
+                onSelect={(event) => {
+                  event.preventDefault();
+                  signOut();
+                }}
+              >
+                <LogOut aria-hidden="true" className="size-4" />
+                {isSigningOut ? "Logging out..." : "Logout"}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </aside>
 
