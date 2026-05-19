@@ -13,11 +13,12 @@ import {
   type LucideIcon,
   Plus,
   Send,
+  ShieldCheck,
   TrendingUp,
   X,
 } from "lucide-react";
 import type { FormEvent } from "react";
-import { useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
@@ -110,6 +111,7 @@ export function Sidebar() {
   const [projectName, setProjectName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [accountError, setAccountError] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [isSigningOut, startSignOutTransition] = useTransition();
 
@@ -118,6 +120,20 @@ export function Sidebar() {
   const userEmail = auth.session?.user.email;
   const userAvatarUrl = getUserAvatarUrl(auth);
   const userInitials = getUserInitials(userName, userEmail);
+  const visibleNavItems = useMemo(
+    () =>
+      isAdmin
+        ? [
+            ...navItems,
+            {
+              label: "Collector Identities",
+              href: "/admin/collector-identities",
+              icon: ShieldCheck,
+            },
+          ]
+        : navItems,
+    [isAdmin],
+  );
 
   const signOut = () => {
     startSignOutTransition(async () => {
@@ -134,6 +150,26 @@ export function Sidebar() {
       }
     });
   };
+
+  useEffect(() => {
+    let mounted = true;
+
+    void apiJson<{ isAdmin: boolean }>("/api/admin/status")
+      .then((data) => {
+        if (mounted) {
+          setIsAdmin(data.isAdmin);
+        }
+      })
+      .catch(() => {
+        if (mounted) {
+          setIsAdmin(false);
+        }
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const switchProject = (project: WorkspaceProject) => {
     if (project.id === activeProject?.id) {
@@ -278,7 +314,7 @@ export function Sidebar() {
         </div>
 
         <nav className="flex flex-1 flex-col gap-1 px-3 py-5">
-          {navItems.map((item) => {
+          {visibleNavItems.map((item) => {
             const Icon = item.icon;
             const isActive =
               item.href === "/"

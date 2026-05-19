@@ -3,6 +3,7 @@ import { useAuth } from "@/state/auth-context";
 import { WorkspaceProvider } from "@/state/workspace-context";
 import { AppShell } from "@/ui/layout/app-shell";
 import { AuthPage } from "@/ui/pages/auth-page";
+import { CollectorIdentitiesPage } from "@/ui/pages/collector-identities-page";
 import { ConnectorsPage } from "@/ui/pages/connectors-page";
 import { PublishPage } from "@/ui/pages/publish-page";
 import { RepositoryPage } from "@/ui/pages/repository-page";
@@ -30,6 +31,10 @@ export function App() {
         <Route element={<AppShell />}>
           <Route index element={<Navigate replace to="/connectors" />} />
           <Route path="connectors" element={<ConnectorsPage />} />
+          <Route
+            path="admin/collector-identities"
+            element={<CollectorIdentitiesPage />}
+          />
           <Route path="repository" element={<RepositoryPage />} />
           <Route path="publish" element={<PublishPage />} />
           <Route path="tracking" element={<TrackingPage />} />

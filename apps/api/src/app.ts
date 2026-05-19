@@ -8,7 +8,7 @@ import {
   getAssetType,
   isSupportedAsset,
 } from "../../../packages/db/src/content-assets.js";
-import { resolveAuthContext } from "./lib/auth-service.js";
+import { isAdminUserId, resolveAuthContext } from "./lib/auth-service.js";
 import { listConnectorCapabilities } from "./lib/connector-service.js";
 import type { DomainContext } from "./lib/domain-store.js";
 import {
@@ -22,6 +22,7 @@ import {
   getEngagementOverview,
   getPublishedContent,
   getWorkspaceSummary,
+  listConnectorAccounts,
   listConnectorConnections,
   listContentAssets,
   listEngagementSnapshots,
@@ -34,11 +35,15 @@ import {
   retryPublishedContent,
   runTrendQuery,
   schedulePublishedContent,
+  setWorkspacePublishingIdentityEnabled,
+  testCollectorIdentity,
   updateContentAsset,
   updatePublishedContent,
   updateTrendPost,
   updateTrendQuery,
+  upsertCollectorIdentity,
   upsertConnectorAccount,
+  upsertPublishingIdentity,
 } from "./lib/domain-store.js";
 import {
   readSupabaseMediaObject,
@@ -148,6 +153,21 @@ async function resolveDomainContext(
   }
 }
 
+async function resolveAdminContext(
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<DomainContext | null> {
+  const context = await resolveDomainContext(request, reply);
+  if (!context) return null;
+
+  if (!context.userId || !isAdminUserId(context.userId)) {
+    reply.code(403).send({ error: "Admin access is required." });
+    return null;
+  }
+
+  return context;
+}
+
 export async function buildApp() {
   const app = Fastify({
     logger: false,
@@ -170,6 +190,18 @@ export async function buildApp() {
   app.get("/api/auth/session", async (request, reply) => {
     try {
       return await resolveAuthContext(request);
+    } catch (error) {
+      return reply.code(401).send({
+        error:
+          error instanceof Error ? error.message : "Unable to verify session.",
+      });
+    }
+  });
+
+  app.get("/api/admin/status", async (request, reply) => {
+    try {
+      const auth = await resolveAuthContext(request);
+      return { isAdmin: isAdminUserId(auth.user.id) };
     } catch (error) {
       return reply.code(401).send({
         error:
@@ -382,6 +414,73 @@ export async function buildApp() {
     Body: {
       platform?: string;
       credentialRef?: string;
+      displayName?: string;
+      platformAccountId?: string;
+      status?: string;
+      expiresAt?: string;
+    };
+  }>("/api/connectors/publishing-identities", async (request, reply) => {
+    const context = await resolveDomainContext(request, reply);
+    if (!context) return;
+
+    const platform = request.body.platform;
+    const supportedPlatforms = new Set(
+      listConnectorCapabilities().map((capability) => capability.platform),
+    );
+
+    if (!platform || !supportedPlatforms.has(platform as never)) {
+      return reply.code(400).send({ error: "Supported platform is required." });
+    }
+
+    const account = await upsertPublishingIdentity(
+      {
+        platform: platform as never,
+        credentialRef:
+          request.body.credentialRef?.trim() ||
+          `oauth://${platform}/${context.userId}`,
+        displayName: request.body.displayName?.trim() || `${platform} account`,
+        platformAccountId: request.body.platformAccountId?.trim(),
+        status: request.body.status as never,
+        expiresAt: request.body.expiresAt,
+      },
+      context,
+    );
+
+    return reply.code(201).send({ account });
+  });
+
+  app.post<{
+    Body: {
+      connectorAccountId?: string;
+      enabled?: boolean;
+    };
+  }>(
+    "/api/connectors/workspace-publishing-identities",
+    async (request, reply) => {
+      const context = await resolveDomainContext(request, reply);
+      if (!context) return;
+
+      const connectorAccountId = request.body.connectorAccountId?.trim();
+      if (!connectorAccountId) {
+        return reply
+          .code(400)
+          .send({ error: "Connector account id is required." });
+      }
+
+      return {
+        result: await setWorkspacePublishingIdentityEnabled(
+          connectorAccountId,
+          request.body.enabled ?? true,
+          context,
+        ),
+      };
+    },
+  );
+
+  app.post<{
+    Body: {
+      platform?: string;
+      credentialRef?: string;
       status?: string;
       expiresAt?: string;
     };
@@ -416,6 +515,107 @@ export async function buildApp() {
     );
 
     return reply.code(201).send({ account });
+  });
+
+  app.get("/api/admin/collector-identities", async (request, reply) => {
+    const context = await resolveAdminContext(request, reply);
+    if (!context) return;
+
+    const accounts = await listConnectorAccounts(context);
+    return {
+      collectorIdentities: accounts.filter(
+        (account) => account.identityKind === "collector",
+      ),
+    };
+  });
+
+  app.post<{
+    Body: {
+      platform?: string;
+      credentialRef?: string;
+      displayName?: string;
+      authMode?: string;
+      adapterBackend?: string;
+      ownerScope?: string;
+      useCases?: string[];
+      status?: string;
+    };
+  }>("/api/admin/collector-identities", async (request, reply) => {
+    const context = await resolveAdminContext(request, reply);
+    if (!context) return;
+
+    const platform = request.body.platform;
+    const supportedPlatforms = new Set(
+      listConnectorCapabilities().map((capability) => capability.platform),
+    );
+
+    if (!platform || !supportedPlatforms.has(platform as never)) {
+      return reply.code(400).send({ error: "Supported platform is required." });
+    }
+
+    if (
+      request.body.authMode !== "public" &&
+      !request.body.credentialRef?.trim()
+    ) {
+      return reply
+        .code(400)
+        .send({ error: "Credential reference is required." });
+    }
+
+    const account = await upsertCollectorIdentity(
+      {
+        platform: platform as never,
+        credentialRef: request.body.credentialRef?.trim(),
+        displayName: request.body.displayName?.trim(),
+        authMode: request.body.authMode as never,
+        adapterBackend: request.body.adapterBackend as never,
+        ownerScope: request.body.ownerScope as never,
+        useCases: request.body.useCases as never,
+        status: request.body.status as never,
+      },
+      context,
+    );
+
+    return reply.code(201).send({ account });
+  });
+
+  app.post<{
+    Body: {
+      platform?: string;
+      credentialRef?: string;
+      displayName?: string;
+      authMode?: string;
+      adapterBackend?: string;
+      ownerScope?: string;
+      useCases?: string[];
+    };
+  }>("/api/admin/collector-identities/test", async (request, reply) => {
+    const context = await resolveAdminContext(request, reply);
+    if (!context) return;
+
+    const platform = request.body.platform;
+    const supportedPlatforms = new Set(
+      listConnectorCapabilities().map((capability) => capability.platform),
+    );
+
+    if (!platform || !supportedPlatforms.has(platform as never)) {
+      return reply.code(400).send({ error: "Supported platform is required." });
+    }
+
+    const account = await testCollectorIdentity(
+      {
+        platform: platform as never,
+        credentialRef: request.body.credentialRef?.trim(),
+        displayName: request.body.displayName?.trim(),
+        authMode: request.body.authMode as never,
+        adapterBackend: request.body.adapterBackend as never,
+        ownerScope: request.body.ownerScope as never,
+        useCases: request.body.useCases as never,
+      },
+      context,
+    );
+
+    return { account };
   });
 
   app.get("/api/published-content", async (request, reply) => {

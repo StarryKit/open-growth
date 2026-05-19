@@ -215,4 +215,135 @@ describe("database store", () => {
       { ignoreDuplicates: true, onConflict: "idempotency_key" },
     );
   });
+
+  it("stores user publishing identities and workspace enablement separately", async () => {
+    process.env.SUPABASE_URL = "https://example.supabase.co";
+    process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role";
+
+    const insertedRows: unknown[] = [];
+    const enabledRows: unknown[] = [];
+    const connectorSingle = {
+      data: {
+        id: "connector-1",
+        workspace_id: null,
+        user_id: "user-1",
+        platform: "x",
+        identity_kind: "publishing",
+        auth_mode: "oauth",
+        use_cases: ["publish", "reply", "engagement"],
+        owner_scope: "user",
+        status: "active",
+        credential_ref: "oauth://x/user-1",
+        display_name: "X founder",
+        platform_account_id: null,
+        adapter_backend: "official_api",
+        expires_at: null,
+        last_verified_at: null,
+        last_error: null,
+        created_at: "2026-05-19T00:00:00.000Z",
+        updated_at: "2026-05-19T00:00:00.000Z",
+      },
+      error: null,
+    };
+    const from = vi.fn((table: string) => {
+      if (table === "workspace_members") {
+        return {
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          limit: vi.fn().mockReturnThis(),
+          maybeSingle: vi.fn().mockResolvedValue({
+            data: { workspace_id: "workspace-1" },
+            error: null,
+          }),
+        };
+      }
+
+      if (table === "projects") {
+        return {
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          maybeSingle: vi.fn().mockResolvedValue({
+            data: { id: "project-1" },
+            error: null,
+          }),
+        };
+      }
+
+      if (table === "connector_accounts") {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn().mockReturnThis(),
+            maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+          })),
+          insert: vi.fn((row) => {
+            insertedRows.push(row);
+            return {
+              select: vi.fn(() => ({
+                single: vi.fn().mockResolvedValue(connectorSingle),
+              })),
+            };
+          }),
+        };
+      }
+
+      if (table === "workspace_connector_accounts") {
+        return {
+          upsert: vi.fn((row) => {
+            enabledRows.push(row);
+            return Promise.resolve({ error: null });
+          }),
+        };
+      }
+
+      throw new Error(`Unexpected table ${table}`);
+    });
+
+    vi.doMock("@supabase/supabase-js", () => ({
+      createClient: () => ({
+        from,
+      }),
+    }));
+
+    const {
+      setDatabaseWorkspacePublishingIdentityEnabled,
+      upsertDatabasePublishingIdentity,
+    } = await import("./database-store.js");
+
+    const account = await upsertDatabasePublishingIdentity(
+      {
+        platform: "x",
+        credentialRef: "oauth://x/user-1",
+        displayName: "X founder",
+      },
+      { userId: "user-1", activeProjectId: "project-1" },
+    );
+    const enabled = await setDatabaseWorkspacePublishingIdentityEnabled(
+      "connector-1",
+      true,
+      { userId: "user-1", activeProjectId: "project-1" },
+    );
+
+    expect(insertedRows).toEqual([
+      expect.objectContaining({
+        workspace_id: null,
+        user_id: "user-1",
+        identity_kind: "publishing",
+      }),
+    ]);
+    expect(account).toMatchObject({
+      id: "connector-1",
+      identityKind: "publishing",
+      enabledForWorkspace: false,
+    });
+    expect(enabledRows).toEqual([
+      expect.objectContaining({
+        workspace_id: "workspace-1",
+        connector_account_id: "connector-1",
+      }),
+    ]);
+    expect(enabled).toEqual({
+      connectorAccountId: "connector-1",
+      enabled: true,
+    });
+  });
 });

@@ -1,7 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type {
   ConnectorAccount,
+  ConnectorAccountStatus,
+  ConnectorCapability,
   ConnectorConnection,
+  ConnectorIdentityKind,
+  ConnectorUseCase,
   EngagementMetrics,
   GrowthPlatform,
   TrendPost,
@@ -25,10 +29,7 @@ type TrendSearchInput = {
   runId: string;
 };
 
-const connectorCapabilities: Record<
-  GrowthPlatform,
-  Omit<ConnectorConnection, "account" | "connectionStatus">
-> = {
+const connectorCapabilities: Record<GrowthPlatform, ConnectorCapability> = {
   x: {
     platform: "x",
     displayName: "X",
@@ -36,6 +37,9 @@ const connectorCapabilities: Record<
     supportsPublish: true,
     supportsEngagement: true,
     supportsTrends: true,
+    supportedAuthModes: ["oauth", "api_key", "browser_profile", "vendor"],
+    supportedUseCases: ["publish", "reply", "engagement", "trends", "read"],
+    collectorModes: ["api_key", "browser_profile", "vendor"],
     maxCharacters: 280,
     maxMediaItems: 4,
     dataSource: "X API adapter",
@@ -48,6 +52,9 @@ const connectorCapabilities: Record<
     supportsPublish: true,
     supportsEngagement: true,
     supportsTrends: true,
+    supportedAuthModes: ["oauth", "api_key", "browser_profile", "vendor"],
+    supportedUseCases: ["publish", "reply", "engagement", "trends", "read"],
+    collectorModes: ["api_key", "browser_profile", "vendor"],
     maxCharacters: 40_000,
     dataSource: "Reddit API adapter",
     limitation: "Requires OAuth app credentials and subreddit permissions.",
@@ -59,6 +66,9 @@ const connectorCapabilities: Record<
     supportsPublish: false,
     supportsEngagement: true,
     supportsTrends: true,
+    supportedAuthModes: ["public"],
+    supportedUseCases: ["engagement", "trends", "read"],
+    collectorModes: ["public"],
     dataSource: "Hacker News Firebase/API adapter",
     limitation: "Public data only; posting is intentionally not automated.",
   },
@@ -69,6 +79,9 @@ const connectorCapabilities: Record<
     supportsPublish: false,
     supportsEngagement: false,
     supportsTrends: true,
+    supportedAuthModes: ["api_key", "browser_profile", "vendor"],
+    supportedUseCases: ["trends", "read"],
+    collectorModes: ["api_key", "browser_profile", "vendor"],
     dataSource: "Approved partner/API adapter only",
     limitation:
       "No credential injection or scraping bypass; must use compliant official access.",
@@ -80,6 +93,9 @@ const connectorCapabilities: Record<
     supportsPublish: true,
     supportsEngagement: true,
     supportsTrends: false,
+    supportedAuthModes: ["oauth", "api_key", "browser_profile"],
+    supportedUseCases: ["publish", "reply", "engagement", "read"],
+    collectorModes: ["api_key", "browser_profile"],
     dataSource: "WeChat Official Account API adapter",
     limitation:
       "Requires official account credentials stored server-side as a secret reference.",
@@ -98,18 +114,104 @@ export function mergeConnectorConnections(
   accounts: ConnectorAccount[],
 ): ConnectorConnection[] {
   return listConnectorCapabilities().map((capability) => {
-    const account = accounts.find(
+    const platformAccounts = accounts.filter(
       (candidate) => candidate.platform === capability.platform,
     );
+    const publishingIdentities = platformAccounts.filter(
+      (account) => account.identityKind === "publishing",
+    );
+    const enabledPublishingIdentities = publishingIdentities.filter(
+      (account) => account.enabledForWorkspace,
+    );
+    const collectorIdentity = platformAccounts.find(
+      (account) => account.identityKind === "collector",
+    );
+    const publishingStatus = connectionStatusFor(
+      enabledPublishingIdentities,
+      capability.supportsPublish ||
+        capability.supportedUseCases.includes("reply"),
+    );
+    const collectorStatus =
+      collectorIdentity?.status ??
+      (capability.collectorModes.includes("public")
+        ? "public-available"
+        : capability.supportsTrends
+          ? "not-configured"
+          : "unsupported");
 
     return {
       ...capability,
-      account,
+      publishingIdentities,
+      enabledPublishingIdentities,
+      collectorIdentity,
+      publishingStatus,
+      collectorStatus,
       connectionStatus:
-        account?.status ??
-        (capability.status === "oauth-required" ? "needs-auth" : "needs-auth"),
+        publishingStatus === "active" || collectorStatus === "active"
+          ? "active"
+          : publishingStatus !== "unsupported"
+            ? publishingStatus
+            : collectorStatus,
     };
   });
+}
+
+function connectionStatusFor(
+  accounts: ConnectorAccount[],
+  supported: boolean,
+): ConnectorAccountStatus {
+  if (!supported) {
+    return "unsupported";
+  }
+
+  if (accounts.some((account) => account.status === "active")) {
+    return "active";
+  }
+
+  return accounts[0]?.status ?? "needs-auth";
+}
+
+export function resolveConnectorIdentity(
+  accounts: ConnectorAccount[],
+  input: {
+    platform: GrowthPlatform;
+    identityKind: ConnectorIdentityKind;
+    useCase: ConnectorUseCase;
+    requireWorkspaceEnabled?: boolean;
+  },
+) {
+  return accounts.find(
+    (account) =>
+      account.platform === input.platform &&
+      account.identityKind === input.identityKind &&
+      account.status === "active" &&
+      account.useCases.includes(input.useCase) &&
+      (!input.requireWorkspaceEnabled || account.enabledForWorkspace),
+  );
+}
+
+export function assertConnectorIdentity(
+  accounts: ConnectorAccount[],
+  input: {
+    platform: GrowthPlatform;
+    identityKind: ConnectorIdentityKind;
+    useCase: ConnectorUseCase;
+    requireWorkspaceEnabled?: boolean;
+  },
+) {
+  const identity = resolveConnectorIdentity(accounts, input);
+
+  if (!identity) {
+    const subject =
+      input.identityKind === "publishing"
+        ? "enabled Publishing identity"
+        : "Collector identity";
+    throw new Error(
+      `Missing ${subject} for ${input.platform} ${input.useCase}.`,
+    );
+  }
+
+  return identity;
 }
 
 function platformSeed(platform: GrowthPlatform) {
