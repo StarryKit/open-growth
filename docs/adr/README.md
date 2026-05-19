@@ -13,3 +13,4 @@ Architecture decisions for this repo live here.
 - [ADR-0001: Record the current workspace architecture](./0001-current-workspace-architecture.md)
 - [ADR-0002: Supabase product data and environment boundaries](./0002-supabase-domain-storage-and-outbox.md)
 - [ADR-0003: Separate publishing and collector identities](./0003-separate-publishing-and-collector-identities.md)
+- [ADR-0004: Content Repository MVP import, edit, and export workflow](./0004-content-repository-mvp.md)
