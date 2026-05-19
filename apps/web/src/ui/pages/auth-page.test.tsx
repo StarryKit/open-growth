@@ -38,6 +38,21 @@ describe("AuthPage", () => {
     expect(auth.signInWithGoogle).toHaveBeenCalledOnce();
   });
 
+  it("signs in with the demo admin account", async () => {
+    const user = userEvent.setup();
+    render(<AuthPage />);
+
+    await user.click(screen.getByRole("button", { name: /use demo account/i }));
+
+    expect(auth.signIn).toHaveBeenCalledWith(
+      "local-dev@open-growth.test",
+      "open-growth-local",
+    );
+    expect(screen.getByLabelText(/email/i)).toHaveValue(
+      "local-dev@open-growth.test",
+    );
+  });
+
   it("registers with email and verifies the signup code", async () => {
     const user = userEvent.setup();
     render(<AuthPage />);

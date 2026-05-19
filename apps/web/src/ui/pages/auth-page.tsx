@@ -1,9 +1,18 @@
-import { ArrowRight, LockKeyhole, MailCheck } from "lucide-react";
+import { ArrowRight, LockKeyhole, MailCheck, UserCheck } from "lucide-react";
 import type { FormEvent } from "react";
 import { useState, useTransition } from "react";
 import { useAuth } from "@/state/auth-context";
 
 type AuthView = "sign-in" | "sign-up" | "verify";
+
+const demoAccount = {
+  email:
+    (import.meta.env.VITE_DEMO_ACCOUNT_EMAIL as string | undefined) ??
+    "local-dev@open-growth.test",
+  password:
+    (import.meta.env.VITE_DEMO_ACCOUNT_PASSWORD as string | undefined) ??
+    "open-growth-local",
+};
 
 export function AuthPage() {
   const auth = useAuth();
@@ -53,6 +62,24 @@ export function AuthPage() {
           googleError instanceof Error
             ? googleError.message
             : "Google authentication failed.",
+        );
+      }
+    });
+  };
+
+  const signInWithDemoAccount = () => {
+    startTransition(async () => {
+      setError(null);
+      setNotice(null);
+      setEmail(demoAccount.email);
+      setPassword(demoAccount.password);
+      try {
+        await auth.signIn(demoAccount.email, demoAccount.password);
+      } catch (demoError) {
+        setError(
+          demoError instanceof Error
+            ? demoError.message
+            : "Demo account authentication failed.",
         );
       }
     });
@@ -154,17 +181,31 @@ export function AuthPage() {
             <p className="mt-2 text-sm leading-6 text-stone-400">{subtitle}</p>
 
             {mode !== "verify" ? (
-              <button
-                className="mt-7 flex h-11 w-full items-center justify-center gap-2 rounded-lg border border-white/12 bg-white px-4 text-sm font-bold text-[#17130f] shadow-sm transition hover:bg-[#f4efe6] disabled:opacity-60"
-                disabled={isPending}
-                onClick={signInWithGoogle}
-                type="button"
-              >
-                <span className="grid size-5 place-items-center rounded-full bg-[#4285f4] text-xs font-black text-white">
-                  G
-                </span>
-                Continue with Google
-              </button>
+              <div className="mt-7 space-y-3">
+                <button
+                  className="flex h-11 w-full items-center justify-center gap-2 rounded-lg border border-white/12 bg-white px-4 text-sm font-bold text-[#17130f] shadow-sm transition hover:bg-[#f4efe6] disabled:opacity-60"
+                  disabled={isPending}
+                  onClick={signInWithGoogle}
+                  type="button"
+                >
+                  <span className="grid size-5 place-items-center rounded-full bg-[#4285f4] text-xs font-black text-white">
+                    G
+                  </span>
+                  Continue with Google
+                </button>
+
+                {mode === "sign-in" ? (
+                  <button
+                    className="flex h-11 w-full items-center justify-center gap-2 rounded-lg border border-[#f0c85a]/35 bg-[#f0c85a]/12 px-4 text-sm font-bold text-[#f5d87d] transition hover:bg-[#f0c85a]/18 disabled:opacity-60"
+                    disabled={isPending}
+                    onClick={signInWithDemoAccount}
+                    type="button"
+                  >
+                    <UserCheck className="size-4" />
+                    Use Demo Account
+                  </button>
+                ) : null}
+              </div>
             ) : null}
 
             {mode !== "verify" ? (
