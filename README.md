@@ -1,4 +1,6 @@
-# Open Growth
+<h1 align="center">
+  <strong>OpenGrowth</strong>
+</h1>
 
 <p align="center">
   <strong>An open workspace for social media operations and growth workflows.</strong>
