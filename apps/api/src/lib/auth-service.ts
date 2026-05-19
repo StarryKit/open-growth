@@ -36,6 +36,19 @@ export function isSupabaseAuthEnabled() {
   return Boolean(supabaseConfig());
 }
 
+export function adminUserIds() {
+  return new Set(
+    (process.env.OPEN_GROWTH_ADMIN_USER_IDS ?? "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean),
+  );
+}
+
+export function isAdminUserId(userId: string) {
+  return adminUserIds().has(userId);
+}
+
 export async function resolveAuthContext(
   request: FastifyRequest,
 ): Promise<AuthContext> {

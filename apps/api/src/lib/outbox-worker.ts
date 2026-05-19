@@ -8,10 +8,14 @@ import {
   type StoreContext,
   updateDatabaseOutboxEventStatus,
 } from "../../../../packages/db/src/database-store.js";
-import { publishContentToPlatform } from "./connector-service.js";
+import {
+  assertConnectorIdentity,
+  publishContentToPlatform,
+} from "./connector-service.js";
 import {
   createEngagementSnapshot,
   executeTrendRunFromOutbox,
+  listConnectorAccounts,
   listPublishedContent,
 } from "./domain-store.js";
 import { deleteSupabaseMediaObject } from "./media-storage.js";
@@ -35,10 +39,19 @@ async function processPublishEvent(event: OutboxEvent, context?: StoreContext) {
     throw new Error("Published content not found.");
   }
 
+  const connectorAccounts = await listConnectorAccounts(context);
+
   for (const target of content.platformTargets) {
     if (target.status === "published") {
       continue;
     }
+
+    assertConnectorIdentity(connectorAccounts, {
+      platform: target.platform,
+      identityKind: "publishing",
+      useCase: "publish",
+      requireWorkspaceEnabled: true,
+    });
 
     const result = await publishContentToPlatform({
       contentId: content.id,

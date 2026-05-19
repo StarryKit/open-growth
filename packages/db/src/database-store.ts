@@ -1,5 +1,10 @@
 import type {
   ConnectorAccount,
+  ConnectorAdapterBackend,
+  ConnectorAuthMode,
+  ConnectorIdentityKind,
+  ConnectorOwnerScope,
+  ConnectorUseCase,
   ContentAsset,
   EngagementMetrics,
   EngagementSnapshot,
@@ -117,15 +122,27 @@ type TrendPostRow = {
 
 type ConnectorAccountRow = {
   id: string;
-  workspace_id: string;
-  user_id: string;
+  workspace_id: string | null;
+  user_id: string | null;
   platform: GrowthPlatform;
+  identity_kind?: ConnectorIdentityKind;
+  auth_mode?: ConnectorAuthMode;
+  use_cases?: ConnectorUseCase[];
+  owner_scope?: ConnectorOwnerScope;
   status: string;
-  credential_ref: string;
+  credential_ref: string | null;
+  display_name?: string | null;
+  platform_account_id?: string | null;
+  adapter_backend?: ConnectorAdapterBackend | null;
   expires_at: string | null;
+  last_verified_at?: string | null;
+  last_error?: string | null;
   created_at: string;
   updated_at: string;
 };
+
+const connectorAccountColumns =
+  "id, workspace_id, user_id, platform, identity_kind, auth_mode, use_cases, owner_scope, status, credential_ref, display_name, platform_account_id, adapter_backend, expires_at, last_verified_at, last_error, created_at, updated_at";
 
 type PublishedContentRow = {
   id: string;
@@ -1729,32 +1746,275 @@ export async function listDatabaseOutboxEvents(context?: StoreContext) {
   }));
 }
 
+function mapConnectorAccount(
+  account: ConnectorAccountRow,
+  enabledForWorkspace = false,
+): ConnectorAccount {
+  return {
+    id: account.id,
+    workspaceId: account.workspace_id,
+    userId: account.user_id,
+    platform: account.platform,
+    identityKind: account.identity_kind ?? "publishing",
+    authMode: account.auth_mode ?? "oauth",
+    useCases: account.use_cases ?? ["publish", "reply", "engagement"],
+    ownerScope: account.owner_scope ?? "user",
+    status: account.status as ConnectorAccount["status"],
+    hasCredentialRef: Boolean(account.credential_ref),
+    displayName: account.display_name ?? undefined,
+    platformAccountId: account.platform_account_id ?? undefined,
+    adapterBackend: account.adapter_backend ?? undefined,
+    expiresAt: account.expires_at ?? undefined,
+    lastVerifiedAt: account.last_verified_at ?? undefined,
+    lastError: account.last_error ?? undefined,
+    enabledForWorkspace,
+    createdAt: account.created_at,
+    updatedAt: account.updated_at,
+  };
+}
+
 export async function listDatabaseConnectorAccounts(context?: StoreContext) {
   const supabase = client();
   const scope = await getDefaultScope(context);
 
   if (!supabase || !scope) return null;
 
-  const { data, error } = await supabase
+  const { data: publishingData, error: publishingError } = await supabase
     .from("connector_accounts")
-    .select(
-      "id, workspace_id, user_id, platform, status, credential_ref, expires_at, created_at, updated_at",
-    )
-    .eq("workspace_id", scope.workspaceId)
+    .select(connectorAccountColumns)
+    .eq("identity_kind", "publishing")
+    .eq("user_id", scope.userId)
     .order("created_at", { ascending: false });
+
+  if (publishingError) throw publishingError;
+
+  const { data: enabledData, error: enabledError } = await supabase
+    .from("workspace_connector_accounts")
+    .select("connector_account_id")
+    .eq("workspace_id", scope.workspaceId);
+
+  if (enabledError) throw enabledError;
+
+  const enabledIds = new Set(
+    ((enabledData ?? []) as Array<{ connector_account_id: string }>).map(
+      (row) => row.connector_account_id,
+    ),
+  );
+  const enabledAccountIds = [...enabledIds];
+  const enabledAccounts =
+    enabledAccountIds.length > 0
+      ? await supabase
+          .from("connector_accounts")
+          .select(connectorAccountColumns)
+          .in("id", enabledAccountIds)
+      : { data: [], error: null };
+
+  if (enabledAccounts.error) throw enabledAccounts.error;
+
+  const { data: collectorData, error: collectorError } = await supabase
+    .from("connector_accounts")
+    .select(connectorAccountColumns)
+    .eq("identity_kind", "collector")
+    .or(`workspace_id.eq.${scope.workspaceId},owner_scope.eq.system`)
+    .order("created_at", { ascending: false });
+
+  if (collectorError) throw collectorError;
+
+  const byId = new Map<string, ConnectorAccount>();
+  for (const account of [
+    ...((publishingData ?? []) as ConnectorAccountRow[]),
+    ...((enabledAccounts.data ?? []) as ConnectorAccountRow[]),
+    ...((collectorData ?? []) as ConnectorAccountRow[]),
+  ]) {
+    byId.set(
+      account.id,
+      mapConnectorAccount(account, enabledIds.has(account.id)),
+    );
+  }
+
+  return [...byId.values()];
+}
+
+async function findConnectorAccount(input: {
+  platform: GrowthPlatform;
+  identityKind: ConnectorIdentityKind;
+  userId?: string | null;
+  workspaceId?: string | null;
+  ownerScope?: ConnectorOwnerScope;
+}) {
+  const supabase = client();
+  if (!supabase) return null;
+
+  let query = supabase
+    .from("connector_accounts")
+    .select(connectorAccountColumns)
+    .eq("platform", input.platform)
+    .eq("identity_kind", input.identityKind);
+
+  if (input.userId !== undefined) {
+    query =
+      input.userId === null
+        ? query.is("user_id", null)
+        : query.eq("user_id", input.userId);
+  }
+
+  if (input.workspaceId !== undefined) {
+    query =
+      input.workspaceId === null
+        ? query.is("workspace_id", null)
+        : query.eq("workspace_id", input.workspaceId);
+  }
+
+  if (input.ownerScope) {
+    query = query.eq("owner_scope", input.ownerScope);
+  }
+
+  const { data, error } = await query.maybeSingle();
+  if (error) throw error;
+  return data as ConnectorAccountRow | null;
+}
+
+export async function upsertDatabasePublishingIdentity(
+  input: {
+    platform: GrowthPlatform;
+    status?: ConnectorAccount["status"];
+    credentialRef?: string;
+    displayName?: string;
+    platformAccountId?: string;
+    authMode?: ConnectorAuthMode;
+    useCases?: ConnectorUseCase[];
+    expiresAt?: string;
+  },
+  context?: StoreContext,
+) {
+  const supabase = client();
+  const scope = await getDefaultScope(context);
+
+  if (!supabase || !scope) return null;
+
+  const existing = await findConnectorAccount({
+    platform: input.platform,
+    identityKind: "publishing",
+    userId: scope.userId,
+  });
+  const row = {
+    workspace_id: null,
+    user_id: scope.userId,
+    platform: input.platform,
+    identity_kind: "publishing",
+    auth_mode: input.authMode ?? "oauth",
+    use_cases: input.useCases ?? ["publish", "reply", "engagement"],
+    owner_scope: "user",
+    status: input.status ?? "active",
+    credential_ref: input.credentialRef ?? null,
+    display_name: input.displayName ?? null,
+    platform_account_id: input.platformAccountId ?? null,
+    adapter_backend: "official_api",
+    expires_at: input.expiresAt ?? null,
+  };
+
+  const query = existing
+    ? supabase.from("connector_accounts").update(row).eq("id", existing.id)
+    : supabase.from("connector_accounts").insert(row);
+
+  const { data, error } = await query.select(connectorAccountColumns).single();
 
   if (error) throw error;
 
-  return ((data ?? []) as ConnectorAccountRow[]).map((account) => ({
-    id: account.id,
-    workspaceId: account.workspace_id,
-    platform: account.platform,
-    status: account.status as ConnectorAccount["status"],
-    hasCredentialRef: Boolean(account.credential_ref),
-    expiresAt: account.expires_at ?? undefined,
-    createdAt: account.created_at,
-    updatedAt: account.updated_at,
-  }));
+  return mapConnectorAccount(data as ConnectorAccountRow);
+}
+
+export async function upsertDatabaseCollectorIdentity(
+  input: {
+    platform: GrowthPlatform;
+    status?: ConnectorAccount["status"];
+    credentialRef?: string;
+    displayName?: string;
+    authMode?: ConnectorAuthMode;
+    useCases?: ConnectorUseCase[];
+    ownerScope?: ConnectorOwnerScope;
+    adapterBackend?: ConnectorAdapterBackend;
+    expiresAt?: string;
+    lastVerifiedAt?: string;
+    lastError?: string | null;
+  },
+  context?: StoreContext,
+) {
+  const supabase = client();
+  const scope = await getDefaultScope(context);
+
+  if (!supabase || !scope) return null;
+
+  const ownerScope = input.ownerScope ?? "workspace";
+  const workspaceId = ownerScope === "system" ? null : scope.workspaceId;
+  const existing = await findConnectorAccount({
+    platform: input.platform,
+    identityKind: "collector",
+    workspaceId,
+    ownerScope,
+  });
+  const row = {
+    workspace_id: workspaceId,
+    user_id: null,
+    platform: input.platform,
+    identity_kind: "collector",
+    auth_mode: input.authMode ?? "api_key",
+    use_cases: input.useCases ?? ["trends", "read"],
+    owner_scope: ownerScope,
+    status: input.status ?? "active",
+    credential_ref: input.credentialRef ?? null,
+    display_name: input.displayName ?? null,
+    platform_account_id: null,
+    adapter_backend: input.adapterBackend ?? "official_api",
+    expires_at: input.expiresAt ?? null,
+    last_verified_at: input.lastVerifiedAt ?? null,
+    last_error: input.lastError ?? null,
+  };
+
+  const query = existing
+    ? supabase.from("connector_accounts").update(row).eq("id", existing.id)
+    : supabase.from("connector_accounts").insert(row);
+
+  const { data, error } = await query.select(connectorAccountColumns).single();
+
+  if (error) throw error;
+
+  return mapConnectorAccount(data as ConnectorAccountRow);
+}
+
+export async function setDatabaseWorkspacePublishingIdentityEnabled(
+  connectorAccountId: string,
+  enabled: boolean,
+  context?: StoreContext,
+) {
+  const supabase = client();
+  const scope = await getDefaultScope(context);
+
+  if (!supabase || !scope) return null;
+
+  if (!enabled) {
+    const { error } = await supabase
+      .from("workspace_connector_accounts")
+      .delete()
+      .eq("workspace_id", scope.workspaceId)
+      .eq("connector_account_id", connectorAccountId);
+
+    if (error) throw error;
+    return { connectorAccountId, enabled: false };
+  }
+
+  const { error } = await supabase.from("workspace_connector_accounts").upsert(
+    {
+      workspace_id: scope.workspaceId,
+      connector_account_id: connectorAccountId,
+      enabled_by: scope.userId,
+    },
+    { onConflict: "workspace_id,connector_account_id" },
+  );
+
+  if (error) throw error;
+
+  return { connectorAccountId, enabled: true };
 }
 
 export async function upsertDatabaseConnectorAccount(
@@ -1766,42 +2026,7 @@ export async function upsertDatabaseConnectorAccount(
   },
   context?: StoreContext,
 ) {
-  const supabase = client();
-  const scope = await getDefaultScope(context);
-
-  if (!supabase || !scope) return null;
-
-  const { data, error } = await supabase
-    .from("connector_accounts")
-    .upsert(
-      {
-        workspace_id: scope.workspaceId,
-        user_id: scope.userId,
-        platform: input.platform,
-        status: input.status ?? "active",
-        credential_ref: input.credentialRef,
-        expires_at: input.expiresAt ?? null,
-      },
-      { onConflict: "workspace_id,user_id,platform" },
-    )
-    .select(
-      "id, workspace_id, user_id, platform, status, credential_ref, expires_at, created_at, updated_at",
-    )
-    .single();
-
-  if (error) throw error;
-
-  const account = data as ConnectorAccountRow;
-  return {
-    id: account.id,
-    workspaceId: account.workspace_id,
-    platform: account.platform,
-    status: account.status as ConnectorAccount["status"],
-    hasCredentialRef: Boolean(account.credential_ref),
-    expiresAt: account.expires_at ?? undefined,
-    createdAt: account.created_at,
-    updatedAt: account.updated_at,
-  } satisfies ConnectorAccount;
+  return upsertDatabasePublishingIdentity(input, context);
 }
 
 export async function listDueDatabaseOutboxEvents(

@@ -36,15 +36,56 @@ export type ConnectorAccountStatus =
   | "active"
   | "expired"
   | "revoked"
-  | "needs-auth";
+  | "needs-auth"
+  | "not-configured"
+  | "public-available"
+  | "needs-attention"
+  | "disabled"
+  | "unsupported";
+
+export type ConnectorIdentityKind = "publishing" | "collector";
+
+export type ConnectorAuthMode =
+  | "oauth"
+  | "api_key"
+  | "public"
+  | "browser_profile"
+  | "vendor";
+
+export type ConnectorUseCase =
+  | "publish"
+  | "reply"
+  | "engagement"
+  | "trends"
+  | "read";
+
+export type ConnectorOwnerScope = "user" | "workspace" | "system";
+
+export type ConnectorAdapterBackend =
+  | "official_api"
+  | "custom_api"
+  | "opencli"
+  | "vendor"
+  | "public_api";
 
 export type ConnectorAccount = {
   id: string;
-  workspaceId: string;
+  workspaceId?: string | null;
+  userId?: string | null;
   platform: GrowthPlatform;
+  identityKind: ConnectorIdentityKind;
+  authMode: ConnectorAuthMode;
+  useCases: ConnectorUseCase[];
+  ownerScope: ConnectorOwnerScope;
   status: ConnectorAccountStatus;
   hasCredentialRef: boolean;
+  displayName?: string;
+  platformAccountId?: string;
+  adapterBackend?: ConnectorAdapterBackend;
   expiresAt?: string;
+  lastVerifiedAt?: string;
+  lastError?: string;
+  enabledForWorkspace?: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -56,6 +97,9 @@ export type ConnectorCapability = {
   supportsPublish: boolean;
   supportsEngagement: boolean;
   supportsTrends: boolean;
+  supportedAuthModes: ConnectorAuthMode[];
+  supportedUseCases: ConnectorUseCase[];
+  collectorModes: ConnectorAuthMode[];
   maxCharacters?: number;
   maxMediaItems?: number;
   dataSource: string;
@@ -63,7 +107,11 @@ export type ConnectorCapability = {
 };
 
 export type ConnectorConnection = ConnectorCapability & {
-  account?: ConnectorAccount;
+  publishingIdentities: ConnectorAccount[];
+  enabledPublishingIdentities: ConnectorAccount[];
+  collectorIdentity?: ConnectorAccount;
+  publishingStatus: ConnectorAccountStatus;
+  collectorStatus: ConnectorAccountStatus;
   connectionStatus: ConnectorAccountStatus;
 };
 

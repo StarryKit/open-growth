@@ -45,9 +45,16 @@ beforeEach(() => {
                 supportsPublish: true,
                 supportsEngagement: true,
                 supportsTrends: true,
+                supportedAuthModes: ["oauth", "api_key"],
+                supportedUseCases: ["publish", "reply", "engagement", "trends"],
+                collectorModes: ["api_key"],
                 dataSource: "X API adapter",
                 limitation: "Requires user OAuth credentials.",
                 connectionStatus: "needs-auth",
+                publishingStatus: "needs-auth",
+                collectorStatus: "not-configured",
+                publishingIdentities: [],
+                enabledPublishingIdentities: [],
               },
             ],
           }),
@@ -76,12 +83,13 @@ describe("ConnectorsPage", () => {
 
     expect(
       await screen.findByRole("heading", {
-        name: /platform access, adapter limits/i,
+        name: /publishing access/i,
       }),
     ).toBeInTheDocument();
+    expect(await screen.findAllByText("X")).not.toHaveLength(0);
+    expect(await screen.findAllByText("needs-auth")).not.toHaveLength(0);
     expect(
-      await screen.findByRole("heading", { name: "X", level: 2 }),
+      await screen.findByText(/no user publishing identity connected/i),
     ).toBeInTheDocument();
-    expect(await screen.findByText("needs-auth")).toBeInTheDocument();
   });
 });

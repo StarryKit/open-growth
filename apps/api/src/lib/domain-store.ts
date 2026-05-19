@@ -22,14 +22,21 @@ import {
   retryDatabasePublishedContent,
   type StoreContext,
   scheduleDatabasePublishedContent,
+  setDatabaseWorkspacePublishingIdentityEnabled,
   updateDatabaseContentAsset,
   updateDatabasePublishedContent,
   updateDatabaseTrendPost,
   updateDatabaseTrendQuery,
+  upsertDatabaseCollectorIdentity,
   upsertDatabaseConnectorAccount,
+  upsertDatabasePublishingIdentity,
 } from "../../../../packages/db/src/database-store.js";
 import type {
   ConnectorAccount,
+  ConnectorAdapterBackend,
+  ConnectorAuthMode,
+  ConnectorOwnerScope,
+  ConnectorUseCase,
   ContentAsset,
   EngagementMetrics,
   EngagementOverview,
@@ -41,6 +48,7 @@ import type {
   TrendQuery,
 } from "../../../../packages/shared/src/index.js";
 import {
+  assertConnectorIdentity,
   fetchEngagement,
   mergeConnectorConnections,
   searchTrends,
@@ -214,6 +222,7 @@ export async function publishContent(
   context?: DomainContext,
 ) {
   assertDatabaseStoreConfigured();
+  await assertPublishingIdentitiesForContent(contentId, context);
   return markDatabasePublishStarted(contentId, context);
 }
 
@@ -222,7 +231,28 @@ export async function retryPublishedContent(
   context?: DomainContext,
 ) {
   assertDatabaseStoreConfigured();
+  await assertPublishingIdentitiesForContent(contentId, context);
   return retryDatabasePublishedContent(contentId, context);
+}
+
+async function assertPublishingIdentitiesForContent(
+  contentId: string,
+  context?: DomainContext,
+) {
+  const content = await getPublishedContent(contentId, context);
+  if (!content) {
+    throw new Error("Published content not found.");
+  }
+
+  const connectorAccounts = await listConnectorAccounts(context);
+  for (const target of content.platformTargets) {
+    assertConnectorIdentity(connectorAccounts, {
+      platform: target.platform,
+      identityKind: "publishing",
+      useCase: "publish",
+      requireWorkspaceEnabled: true,
+    });
+  }
 }
 
 export async function createEngagementSnapshot(
@@ -447,6 +477,19 @@ export async function executeTrendRunFromOutbox(
     return null;
   }
 
+  const connectorAccounts = await listConnectorAccounts(context);
+  for (const platform of query.platforms) {
+    if (platform === "hacker-news") {
+      continue;
+    }
+
+    assertConnectorIdentity(connectorAccounts, {
+      platform,
+      identityKind: "collector",
+      useCase: "trends",
+    });
+  }
+
   const posts = (await searchTrends({ query, runId: input.runId })).map(
     (post) => ({
       ...post,
@@ -519,12 +562,12 @@ export async function getWorkspaceSummary(context?: DomainContext) {
 }
 
 export async function listConnectorConnections(context?: DomainContext) {
-  assertDatabaseStoreConfigured();
-  const databaseConnections = assertDatabaseResult(
-    await listDatabaseConnectorAccounts(context),
-  );
+  return mergeConnectorConnections(await listConnectorAccounts(context));
+}
 
-  return mergeConnectorConnections(databaseConnections);
+export async function listConnectorAccounts(context?: DomainContext) {
+  assertDatabaseStoreConfigured();
+  return assertDatabaseResult(await listDatabaseConnectorAccounts(context));
 }
 
 export async function upsertConnectorAccount(
@@ -539,6 +582,92 @@ export async function upsertConnectorAccount(
   assertDatabaseStoreConfigured();
   return assertDatabaseResult(
     await upsertDatabaseConnectorAccount(input, context),
+  );
+}
+
+export async function upsertPublishingIdentity(
+  input: {
+    platform: GrowthPlatform;
+    credentialRef?: string;
+    displayName?: string;
+    platformAccountId?: string;
+    authMode?: ConnectorAuthMode;
+    useCases?: ConnectorUseCase[];
+    status?: ConnectorAccount["status"];
+    expiresAt?: string;
+  },
+  context?: DomainContext,
+) {
+  assertDatabaseStoreConfigured();
+  return assertDatabaseResult(
+    await upsertDatabasePublishingIdentity(input, context),
+  );
+}
+
+export async function setWorkspacePublishingIdentityEnabled(
+  connectorAccountId: string,
+  enabled: boolean,
+  context?: DomainContext,
+) {
+  assertDatabaseStoreConfigured();
+  return assertDatabaseResult(
+    await setDatabaseWorkspacePublishingIdentityEnabled(
+      connectorAccountId,
+      enabled,
+      context,
+    ),
+  );
+}
+
+export async function upsertCollectorIdentity(
+  input: {
+    platform: GrowthPlatform;
+    credentialRef?: string;
+    displayName?: string;
+    authMode?: ConnectorAuthMode;
+    useCases?: ConnectorUseCase[];
+    ownerScope?: ConnectorOwnerScope;
+    adapterBackend?: ConnectorAdapterBackend;
+    status?: ConnectorAccount["status"];
+    expiresAt?: string;
+    lastVerifiedAt?: string;
+    lastError?: string | null;
+  },
+  context?: DomainContext,
+) {
+  assertDatabaseStoreConfigured();
+  return assertDatabaseResult(
+    await upsertDatabaseCollectorIdentity(input, context),
+  );
+}
+
+export async function testCollectorIdentity(
+  input: {
+    platform: GrowthPlatform;
+    credentialRef?: string;
+    displayName?: string;
+    authMode?: ConnectorAuthMode;
+    useCases?: ConnectorUseCase[];
+    ownerScope?: ConnectorOwnerScope;
+    adapterBackend?: ConnectorAdapterBackend;
+  },
+  context?: DomainContext,
+) {
+  const now = new Date().toISOString();
+  return upsertCollectorIdentity(
+    {
+      ...input,
+      status:
+        input.authMode === "public" || input.credentialRef
+          ? "active"
+          : "needs-attention",
+      lastVerifiedAt: now,
+      lastError:
+        input.authMode === "public" || input.credentialRef
+          ? null
+          : "Credential reference is required for this collector mode.",
+    },
+    context,
   );
 }
 
