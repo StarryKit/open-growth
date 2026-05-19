@@ -1,6 +1,14 @@
 import { createClient, type Session } from "@supabase/supabase-js";
 import type { ReactNode } from "react";
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useState,
+} from "react";
+import { configureApiAuth } from "@/ui/lib/api";
 
 type AuthMode = "supabase" | "local-dev";
 
@@ -44,11 +52,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     let mounted = true;
 
-    void supabase.auth.getSession().then(({ data }) => {
-      if (mounted) {
-        setSession(data.session);
+    void supabase.auth.getSession().then(async ({ data }) => {
+      if (!mounted) return;
+
+      if (!data.session) {
+        setSession(null);
         setLoading(false);
+        return;
       }
+
+      const { error } = await supabase.auth.getUser();
+      if (!mounted) return;
+
+      if (error) {
+        await supabase.auth.signOut();
+        setSession(null);
+      } else {
+        setSession(data.session);
+      }
+
+      setLoading(false);
     });
 
     const { data } = supabase.auth.onAuthStateChange((_event, nextSession) => {
@@ -129,6 +152,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }),
     [loading, session],
   );
+
+  useLayoutEffect(() => {
+    configureApiAuth(value.accessToken);
+    return () => configureApiAuth(null);
+  }, [value.accessToken]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

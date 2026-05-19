@@ -10,11 +10,19 @@ const platformLogo: Record<GrowthPlatform, string> = {
   xiaohongshu: "RED",
   wechat: "WX",
 };
+const supportedPlatforms = new Set<GrowthPlatform>(["x", "reddit"]);
 
-export function ConnectorsPage() {
+export function navigateToConnectorOAuth(authorizationUrl: string) {
+  window.location.assign(authorizationUrl);
+}
+
+export function ConnectorsPage({
+  navigate = navigateToConnectorOAuth,
+}: {
+  navigate?: (authorizationUrl: string) => void;
+} = {}) {
   const [connectors, setConnectors] = useState<ConnectorConnection[]>([]);
   const [selectedPlatform, setSelectedPlatform] = useState<GrowthPlatform>("x");
-  const [displayName, setDisplayName] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
@@ -29,12 +37,30 @@ export function ConnectorsPage() {
     const data = await apiJson<{ connectors: ConnectorConnection[] }>(
       "/api/connectors",
     );
-    setConnectors(data.connectors);
-    setSelectedPlatform((current) => data.connectors[0]?.platform ?? current);
+    const visibleConnectors = data.connectors.filter((connector) =>
+      supportedPlatforms.has(connector.platform),
+    );
+    setConnectors(visibleConnectors);
+    setSelectedPlatform((current) => visibleConnectors[0]?.platform ?? current);
   };
 
   useEffect(() => {
     void loadConnectors();
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const connected = params.get("connector_connected");
+    const error = params.get("connector_error");
+
+    if (connected) {
+      setMessage(`${connected} publishing identity connected.`);
+      window.history.replaceState({}, "", window.location.pathname);
+      void loadConnectors();
+    } else if (error) {
+      setMessage(error);
+      window.history.replaceState({}, "", window.location.pathname);
+    }
   }, []);
 
   const connectPublishingIdentity = () => {
@@ -42,27 +68,17 @@ export function ConnectorsPage() {
 
     startTransition(async () => {
       setMessage(null);
-      const data = await apiJson<{ account: { id: string } }>(
-        "/api/connectors/publishing-identities",
+      const data = await apiJson<{ authorizationUrl: string }>(
+        "/api/connectors/publishing-identities/start",
         {
           method: "POST",
           body: JSON.stringify({
             platform: selectedPlatform,
-            displayName:
-              displayName.trim() || `${selectedConnector.displayName} account`,
+            redirectTo: "/connectors",
           }),
         },
       );
-      await apiJson("/api/connectors/workspace-publishing-identities", {
-        method: "POST",
-        body: JSON.stringify({
-          connectorAccountId: data.account.id,
-          enabled: true,
-        }),
-      });
-      setDisplayName("");
-      await loadConnectors();
-      setMessage("Publishing identity connected and enabled.");
+      navigate(data.authorizationUrl);
     });
   };
 
@@ -160,10 +176,9 @@ export function ConnectorsPage() {
               </p>
               <input
                 className="mt-5 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm dark:border-slate-800 dark:bg-slate-950"
-                disabled={!selectedConnector.supportsPublish}
-                onChange={(event) => setDisplayName(event.target.value)}
+                disabled
                 placeholder={`${selectedConnector.displayName} account label`}
-                value={displayName}
+                value=""
               />
               <button
                 className="mt-4 inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 text-sm font-semibold text-white disabled:opacity-60 dark:bg-white dark:text-slate-950"

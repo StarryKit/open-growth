@@ -9,7 +9,17 @@ import {
   isSupportedAsset,
 } from "../../../packages/db/src/content-assets.js";
 import { isAdminUserId, resolveAuthContext } from "./lib/auth-service.js";
+import {
+  beginPublishingOAuth,
+  completePublishingOAuth,
+  connectorOAuthFailureUrl,
+  connectorOAuthSuccessUrl,
+} from "./lib/connector-oauth.js";
 import { listConnectorCapabilities } from "./lib/connector-service.js";
+import {
+  getDeploymentSettings,
+  saveDeploymentSettings,
+} from "./lib/deployment-settings.js";
 import type { DomainContext } from "./lib/domain-store.js";
 import {
   createContentAsset,
@@ -43,12 +53,15 @@ import {
   updateTrendQuery,
   upsertCollectorIdentity,
   upsertConnectorAccount,
-  upsertPublishingIdentity,
 } from "./lib/domain-store.js";
 import {
   readSupabaseMediaObject,
   saveMediaObject,
 } from "./lib/media-storage.js";
+import {
+  listOAuthAppConfigs,
+  saveOAuthAppConfig,
+} from "./lib/oauth-app-config.js";
 import { processDueOutboxEvents } from "./lib/outbox-worker.js";
 import {
   createProject,
@@ -413,13 +426,9 @@ export async function buildApp() {
   app.post<{
     Body: {
       platform?: string;
-      credentialRef?: string;
-      displayName?: string;
-      platformAccountId?: string;
-      status?: string;
-      expiresAt?: string;
+      redirectTo?: string;
     };
-  }>("/api/connectors/publishing-identities", async (request, reply) => {
+  }>("/api/connectors/publishing-identities/start", async (request, reply) => {
     const context = await resolveDomainContext(request, reply);
     if (!context) return;
 
@@ -432,21 +441,75 @@ export async function buildApp() {
       return reply.code(400).send({ error: "Supported platform is required." });
     }
 
-    const account = await upsertPublishingIdentity(
-      {
+    try {
+      const auth = await beginPublishingOAuth({
         platform: platform as never,
-        credentialRef:
-          request.body.credentialRef?.trim() ||
-          `oauth://${platform}/${context.userId}`,
-        displayName: request.body.displayName?.trim() || `${platform} account`,
-        platformAccountId: request.body.platformAccountId?.trim(),
-        status: request.body.status as never,
-        expiresAt: request.body.expiresAt,
-      },
-      context,
-    );
+        redirectTo: request.body.redirectTo,
+        context,
+      });
+      return {
+        authorizationUrl: auth.authorizationUrl,
+        state: auth.state,
+      };
+    } catch (error) {
+      return reply.code(400).send({
+        error:
+          error instanceof Error ? error.message : "Unable to start OAuth.",
+      });
+    }
+  });
 
-    return reply.code(201).send({ account });
+  app.get<{
+    Params: { platform: string };
+    Querystring: { code?: string; state?: string };
+  }>("/api/connectors/oauth/:platform/callback", async (request, reply) => {
+    const platform = request.params.platform as never;
+    const code = request.query.code?.trim();
+    const state = request.query.state?.trim();
+
+    if (!code || !state) {
+      return reply
+        .code(400)
+        .send({ error: "OAuth code and state are required." });
+    }
+
+    try {
+      const result = await completePublishingOAuth({
+        platform,
+        code,
+        state,
+      });
+      return reply.redirect(
+        await connectorOAuthSuccessUrl({
+          redirectTo: result.redirectTo,
+          platform,
+        }),
+      );
+    } catch (error) {
+      return reply.redirect(
+        await connectorOAuthFailureUrl(
+          error instanceof Error ? error.message : "OAuth failed.",
+          platform,
+        ),
+      );
+    }
+  });
+
+  app.post<{
+    Body: {
+      platform?: string;
+      displayName?: string;
+      platformAccountId?: string;
+      status?: string;
+      expiresAt?: string;
+    };
+  }>("/api/connectors/publishing-identities", async (request, reply) => {
+    const context = await resolveDomainContext(request, reply);
+    if (!context) return;
+
+    return reply.code(410).send({
+      error: "Use the OAuth start endpoint for publishing identities.",
+    });
   });
 
   app.post<{
@@ -527,6 +590,87 @@ export async function buildApp() {
         (account) => account.identityKind === "collector",
       ),
     };
+  });
+
+  app.get("/api/admin/oauth-apps", async (request, reply) => {
+    const context = await resolveAdminContext(request, reply);
+    if (!context) return;
+
+    return { oauthApps: await listOAuthAppConfigs() };
+  });
+
+  app.get("/api/admin/deployment-settings", async (request, reply) => {
+    const context = await resolveAdminContext(request, reply);
+    if (!context) return;
+
+    return { deploymentSettings: await getDeploymentSettings() };
+  });
+
+  app.post<{
+    Body: {
+      platform?: string;
+      clientId?: string;
+      clientSecret?: string;
+    };
+  }>("/api/admin/oauth-apps", async (request, reply) => {
+    const context = await resolveAdminContext(request, reply);
+    if (!context) return;
+
+    const platform = request.body.platform;
+    if (!platform) {
+      return reply.code(400).send({ error: "Platform is required." });
+    }
+
+    try {
+      const oauthApp = await saveOAuthAppConfig({
+        platform: platform as never,
+        clientId: request.body.clientId ?? "",
+        clientSecret: request.body.clientSecret ?? undefined,
+        context,
+      });
+      return reply.code(201).send({ oauthApp });
+    } catch (error) {
+      return reply.code(400).send({
+        error:
+          error instanceof Error ? error.message : "Unable to save OAuth app.",
+      });
+    }
+  });
+
+  app.post<{
+    Body: {
+      publicBaseUrl?: string;
+      redirectBaseUrl?: string;
+    };
+  }>("/api/admin/deployment-settings", async (request, reply) => {
+    const context = await resolveAdminContext(request, reply);
+    if (!context) return;
+
+    const publicBaseUrl = request.body.publicBaseUrl?.trim();
+    const redirectBaseUrl = request.body.redirectBaseUrl?.trim();
+
+    if (!publicBaseUrl || !redirectBaseUrl) {
+      return reply
+        .code(400)
+        .send({ error: "Public base URL and redirect base URL are required." });
+    }
+
+    try {
+      const deploymentSettings = await saveDeploymentSettings({
+        publicBaseUrl,
+        redirectBaseUrl,
+        context,
+      });
+
+      return reply.code(201).send({ deploymentSettings });
+    } catch (error) {
+      return reply.code(400).send({
+        error:
+          error instanceof Error
+            ? error.message
+            : "Unable to save deployment settings.",
+      });
+    }
   });
 
   app.post<{

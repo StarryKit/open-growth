@@ -346,4 +346,99 @@ describe("database store", () => {
       enabled: true,
     });
   });
+
+  it("reads and writes deployment settings through the Supabase RPC contract", async () => {
+    process.env.SUPABASE_URL = "https://example.supabase.co";
+    process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role";
+
+    const rpc = vi.fn((name: string) => {
+      if (name === "get_deployment_settings") {
+        return Promise.resolve({
+          data: [
+            {
+              public_base_url: "https://app.example.com",
+              redirect_base_url: "https://api.example.com",
+              updated_at: "2026-05-19T00:00:00.000Z",
+            },
+          ],
+          error: null,
+        });
+      }
+
+      if (name === "upsert_deployment_settings") {
+        return Promise.resolve({
+          data: [
+            {
+              public_base_url: "https://app.example.com",
+              redirect_base_url: "https://api.example.com",
+              updated_at: "2026-05-19T00:00:00.000Z",
+            },
+          ],
+          error: null,
+        });
+      }
+
+      throw new Error(`Unexpected rpc ${name}`);
+    });
+    const from = vi.fn((table: string) => {
+      if (table === "workspace_members") {
+        return {
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          limit: vi.fn().mockReturnThis(),
+          maybeSingle: vi.fn().mockResolvedValue({
+            data: { workspace_id: "workspace-1" },
+            error: null,
+          }),
+        };
+      }
+
+      if (table === "projects") {
+        return {
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          maybeSingle: vi.fn().mockResolvedValue({
+            data: { id: "project-1" },
+            error: null,
+          }),
+        };
+      }
+
+      throw new Error(`Unexpected table ${table}`);
+    });
+
+    vi.doMock("@supabase/supabase-js", () => ({
+      createClient: () => ({
+        from,
+        rpc,
+      }),
+    }));
+
+    const { getDatabaseDeploymentSettings, upsertDatabaseDeploymentSettings } =
+      await import("./database-store.js");
+
+    await expect(getDatabaseDeploymentSettings()).resolves.toMatchObject({
+      publicBaseUrl: "https://app.example.com",
+      redirectBaseUrl: "https://api.example.com",
+    });
+    await expect(
+      upsertDatabaseDeploymentSettings(
+        {
+          publicBaseUrl: "https://app.example.com",
+          redirectBaseUrl: "https://api.example.com",
+        },
+        { userId: "user-1", activeProjectId: "project-1" },
+      ),
+    ).resolves.toMatchObject({
+      publicBaseUrl: "https://app.example.com",
+      redirectBaseUrl: "https://api.example.com",
+    });
+
+    expect(rpc).toHaveBeenCalledWith("get_deployment_settings");
+    expect(rpc).toHaveBeenCalledWith("upsert_deployment_settings", {
+      p_public_base_url: "https://app.example.com",
+      p_redirect_base_url: "https://api.example.com",
+      p_user_id: "user-1",
+    });
+  });
 });

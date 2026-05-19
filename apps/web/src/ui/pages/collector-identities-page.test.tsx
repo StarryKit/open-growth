@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthProvider } from "@/state/auth-context";
@@ -34,20 +35,20 @@ beforeEach(() => {
           json: async () => ({
             connectors: [
               {
-                platform: "hacker-news",
-                displayName: "Hacker News",
-                status: "adapter-required",
-                supportsPublish: false,
+                platform: "x",
+                displayName: "X",
+                status: "oauth-required",
+                supportsPublish: true,
                 supportsEngagement: true,
                 supportsTrends: true,
-                supportedAuthModes: ["public"],
-                supportedUseCases: ["engagement", "trends", "read"],
-                collectorModes: ["public"],
-                dataSource: "Hacker News Firebase/API adapter",
-                limitation: "Public data only.",
-                connectionStatus: "public-available",
-                publishingStatus: "unsupported",
-                collectorStatus: "public-available",
+                supportedAuthModes: ["oauth", "api_key"],
+                supportedUseCases: ["publish", "reply", "engagement", "trends"],
+                collectorModes: ["api_key"],
+                dataSource: "X API adapter",
+                limitation: "Requires OAuth.",
+                connectionStatus: "needs-auth",
+                publishingStatus: "needs-auth",
+                collectorStatus: "not-configured",
                 publishingIdentities: [],
                 enabledPublishingIdentities: [],
               },
@@ -65,6 +66,42 @@ beforeEach(() => {
         };
       }
 
+      if (url.endsWith("/api/admin/oauth-apps")) {
+        return {
+          ok: true,
+          json: async () => ({
+            oauthApps: [
+              {
+                platform: "x",
+                clientId: "",
+                hasClientSecret: false,
+                redirectUri:
+                  "http://localhost:3001/api/connectors/oauth/x/callback",
+              },
+              {
+                platform: "reddit",
+                clientId: "",
+                hasClientSecret: false,
+                redirectUri:
+                  "http://localhost:3001/api/connectors/oauth/reddit/callback",
+              },
+            ],
+          }),
+        };
+      }
+
+      if (url.endsWith("/api/admin/deployment-settings")) {
+        return {
+          ok: true,
+          json: async () => ({
+            deploymentSettings: {
+              publicBaseUrl: "http://localhost:5173",
+              redirectBaseUrl: "http://localhost:3001",
+            },
+          }),
+        };
+      }
+
       return {
         ok: true,
         json: async () => ({ ok: true }),
@@ -75,6 +112,8 @@ beforeEach(() => {
 
 describe("CollectorIdentitiesPage", () => {
   it("renders admin collector configuration", async () => {
+    const user = userEvent.setup();
+
     render(
       <MemoryRouter>
         <AuthProvider>
@@ -86,9 +125,88 @@ describe("CollectorIdentitiesPage", () => {
     );
 
     expect(
-      await screen.findByRole("heading", { name: /collector identities/i }),
+      await screen.findByRole("heading", { name: /^admin$/i }),
     ).toBeInTheDocument();
-    expect(await screen.findAllByText("Hacker News")).not.toHaveLength(0);
-    expect(await screen.findByText("public-available")).toBeInTheDocument();
+    expect(await screen.findByText("Runtime URLs")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: /oauth apps/i }));
+    expect(await screen.findAllByText("X")).not.toHaveLength(0);
+    expect(await screen.findByText("X OAuth")).toBeInTheDocument();
+    expect(await screen.findAllByText("missing")).not.toHaveLength(0);
+
+    await user.click(screen.getByRole("tab", { name: /collectors/i }));
+    expect(await screen.findByText("Collector setup")).toBeInTheDocument();
+  });
+
+  it("shows load errors instead of denying admin access", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = input.toString();
+
+        if (url.endsWith("/api/projects")) {
+          return {
+            ok: true,
+            json: async () => ({
+              projects: [],
+              activeProject: null,
+            }),
+          };
+        }
+
+        if (url.endsWith("/api/admin/status")) {
+          return {
+            ok: true,
+            json: async () => ({ isAdmin: true }),
+          };
+        }
+
+        if (url.endsWith("/api/connectors")) {
+          return {
+            ok: false,
+            status: 500,
+            json: async () => ({ error: "Unable to read connectors." }),
+          };
+        }
+
+        if (url.endsWith("/api/admin/oauth-apps")) {
+          return {
+            ok: true,
+            json: async () => ({ oauthApps: [] }),
+          };
+        }
+
+        if (url.endsWith("/api/admin/deployment-settings")) {
+          return {
+            ok: true,
+            json: async () => ({
+              deploymentSettings: {
+                publicBaseUrl: "http://localhost:5173",
+                redirectBaseUrl: "http://localhost:3001",
+              },
+            }),
+          };
+        }
+
+        return {
+          ok: true,
+          json: async () => ({ ok: true }),
+        };
+      }),
+    );
+
+    render(
+      <MemoryRouter>
+        <AuthProvider>
+          <WorkspaceProvider>
+            <CollectorIdentitiesPage />
+          </WorkspaceProvider>
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+
+    expect(
+      await screen.findByText(/unable to read connectors/i),
+    ).toBeInTheDocument();
   });
 });

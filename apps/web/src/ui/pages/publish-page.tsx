@@ -21,7 +21,7 @@ const platformLabels: Record<GrowthPlatform, string> = {
   wechat: "WeChat",
 };
 
-const publishPlatformOptions = ["x", "reddit", "wechat"] as GrowthPlatform[];
+const publishPlatformOptions = ["x", "reddit"] as GrowthPlatform[];
 
 export function PublishPage() {
   const [contents, setContents] = useState<PublishedContent[]>([]);

@@ -1,8 +1,7 @@
 import type { WorkspaceProject } from "@shared";
 import type { ReactNode } from "react";
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
-import { useAuth } from "@/state/auth-context";
-import { apiJson, configureApiAuth, configureApiProject } from "@/ui/lib/api";
+import { apiJson, configureApiProject } from "@/ui/lib/api";
 
 type WorkspaceState = {
   projects: WorkspaceProject[];
@@ -25,7 +24,6 @@ async function fetchWorkspace() {
 }
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
-  const auth = useAuth();
   const [projects, setProjects] = useState<WorkspaceProject[]>([]);
   const [activeProject, setActiveProject] = useState<WorkspaceProject | null>(
     null,
@@ -45,9 +43,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
-    configureApiAuth(auth.accessToken);
     void reloadWorkspace();
-  }, [auth.accessToken]);
+  }, []);
 
   useEffect(() => {
     configureApiProject(() => activeProject?.id ?? null);

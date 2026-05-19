@@ -41,7 +41,7 @@ const sortOptions = [
   { label: "Size", value: "size" },
   { label: "Usage", value: "usage" },
 ] as const;
-const platformOptions = ["x", "reddit", "wechat"] as const;
+const platformOptions = ["x", "reddit"] as const;
 
 function formatBytes(size: number): string {
   if (size < 1024) {
@@ -262,7 +262,7 @@ export function RepositoryClient({
             assetIds: asset.id ? [asset.id] : [],
             platforms: asset.platforms?.length
               ? asset.platforms
-              : ["x", "reddit", "wechat"],
+              : ["x", "reddit"],
           }),
         });
 

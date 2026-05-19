@@ -31,9 +31,10 @@ export function App() {
         <Route element={<AppShell />}>
           <Route index element={<Navigate replace to="/connectors" />} />
           <Route path="connectors" element={<ConnectorsPage />} />
+          <Route path="admin" element={<CollectorIdentitiesPage />} />
           <Route
             path="admin/collector-identities"
-            element={<CollectorIdentitiesPage />}
+            element={<Navigate replace to="/admin" />}
           />
           <Route path="repository" element={<RepositoryPage />} />
           <Route path="publish" element={<PublishPage />} />

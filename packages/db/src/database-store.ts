@@ -144,6 +144,62 @@ type ConnectorAccountRow = {
 const connectorAccountColumns =
   "id, workspace_id, user_id, platform, identity_kind, auth_mode, use_cases, owner_scope, status, credential_ref, display_name, platform_account_id, adapter_backend, expires_at, last_verified_at, last_error, created_at, updated_at";
 
+type ConnectorOAuthAuthorizationRow = {
+  id: string;
+  workspace_id: string;
+  user_id: string;
+  platform: GrowthPlatform;
+  state: string;
+  code_verifier: string | null;
+  redirect_to: string | null;
+  status: string;
+  expires_at: string;
+  consumed_at: string | null;
+  created_at: string;
+};
+
+export type ConnectorOAuthAuthorizationRecord = {
+  id: string;
+  workspaceId: string;
+  userId: string;
+  platform: GrowthPlatform;
+  state: string;
+  codeVerifier?: string;
+  redirectTo?: string;
+  status: string;
+  expiresAt: string;
+  consumedAt?: string;
+  createdAt: string;
+};
+
+type OAuthAppConfigRow = {
+  platform: GrowthPlatform;
+  client_id: string;
+  has_client_secret: boolean;
+  updated_at: string | null;
+  client_secret?: string | null;
+};
+
+export type DatabaseOAuthAppConfig = {
+  platform: GrowthPlatform;
+  clientId: string;
+  hasClientSecret: boolean;
+  updatedAt?: string;
+  clientSecret?: string;
+};
+
+type DeploymentSettingsRow = {
+  public_base_url: string;
+  redirect_base_url: string;
+  updated_at: string | null;
+};
+
+export type DatabaseDeploymentSettings = {
+  publicBaseUrl: string;
+  redirectBaseUrl: string;
+  updatedAt?: string;
+};
+
 type PublishedContentRow = {
   id: string;
   project_id: string;
@@ -290,10 +346,16 @@ export async function getDefaultScope(
     return null;
   }
 
-  const { data: membership, error: membershipError } = await supabase
+  let membershipQuery = supabase
     .from("workspace_members")
     .select("workspace_id")
-    .eq("user_id", userId)
+    .eq("user_id", userId);
+
+  if (context?.workspaceId) {
+    membershipQuery = membershipQuery.eq("workspace_id", context.workspaceId);
+  }
+
+  const { data: membership, error: membershipError } = await membershipQuery
     .limit(1)
     .maybeSingle();
 
@@ -2015,6 +2077,209 @@ export async function setDatabaseWorkspacePublishingIdentityEnabled(
   if (error) throw error;
 
   return { connectorAccountId, enabled: true };
+}
+
+function mapConnectorOAuthAuthorization(
+  row: ConnectorOAuthAuthorizationRow,
+): ConnectorOAuthAuthorizationRecord {
+  return {
+    id: row.id,
+    workspaceId: row.workspace_id,
+    userId: row.user_id,
+    platform: row.platform,
+    state: row.state,
+    codeVerifier: row.code_verifier ?? undefined,
+    redirectTo: row.redirect_to ?? undefined,
+    status: row.status,
+    expiresAt: row.expires_at,
+    consumedAt: row.consumed_at ?? undefined,
+    createdAt: row.created_at,
+  };
+}
+
+export async function insertDatabaseConnectorOAuthAuthorization(
+  input: {
+    platform: GrowthPlatform;
+    state: string;
+    codeVerifier?: string;
+    redirectTo?: string;
+    expiresAt: string;
+  },
+  context?: StoreContext,
+) {
+  const supabase = client();
+  const scope = await getDefaultScope(context);
+
+  if (!supabase || !scope) return null;
+
+  const { data, error } = await supabase
+    .from("connector_oauth_authorizations")
+    .insert({
+      workspace_id: scope.workspaceId,
+      user_id: scope.userId,
+      platform: input.platform,
+      state: input.state,
+      code_verifier: input.codeVerifier ?? null,
+      redirect_to: input.redirectTo ?? null,
+      status: "pending",
+      expires_at: input.expiresAt,
+    })
+    .select(
+      "id, workspace_id, user_id, platform, state, code_verifier, redirect_to, status, expires_at, consumed_at, created_at",
+    )
+    .single();
+
+  if (error) throw error;
+  return mapConnectorOAuthAuthorization(data as ConnectorOAuthAuthorizationRow);
+}
+
+export async function consumeDatabaseConnectorOAuthAuthorization(input: {
+  platform: GrowthPlatform;
+  state: string;
+}) {
+  const supabase = client();
+
+  if (!supabase) return null;
+
+  const columns =
+    "id, workspace_id, user_id, platform, state, code_verifier, redirect_to, status, expires_at, consumed_at, created_at";
+  const { data: existing, error: readError } = await supabase
+    .from("connector_oauth_authorizations")
+    .select(columns)
+    .eq("platform", input.platform)
+    .eq("state", input.state)
+    .eq("status", "pending")
+    .gt("expires_at", new Date().toISOString())
+    .maybeSingle();
+
+  if (readError) throw readError;
+  if (!existing) return null;
+
+  const timestamp = new Date().toISOString();
+  const { data, error } = await supabase
+    .from("connector_oauth_authorizations")
+    .update({
+      status: "consumed",
+      consumed_at: timestamp,
+    })
+    .eq("id", (existing as ConnectorOAuthAuthorizationRow).id)
+    .select(columns)
+    .single();
+
+  if (error) throw error;
+  return mapConnectorOAuthAuthorization(data as ConnectorOAuthAuthorizationRow);
+}
+
+function mapOAuthAppConfig(row: OAuthAppConfigRow): DatabaseOAuthAppConfig {
+  return {
+    platform: row.platform,
+    clientId: row.client_id,
+    hasClientSecret: row.has_client_secret,
+    updatedAt: row.updated_at ?? undefined,
+    clientSecret: row.client_secret ?? undefined,
+  };
+}
+
+function mapDeploymentSettings(
+  row: DeploymentSettingsRow,
+): DatabaseDeploymentSettings {
+  return {
+    publicBaseUrl: row.public_base_url,
+    redirectBaseUrl: row.redirect_base_url,
+    updatedAt: row.updated_at ?? undefined,
+  };
+}
+
+export async function getDatabaseOAuthAppConfig(platform: GrowthPlatform) {
+  const supabase = client();
+  if (!supabase) return null;
+
+  const { data, error } = await supabase.rpc("get_oauth_app_config", {
+    p_platform: platform,
+  });
+
+  if (error) throw error;
+
+  const rows = (data ?? []) as OAuthAppConfigRow[];
+  return rows[0] ? mapOAuthAppConfig(rows[0]) : null;
+}
+
+export async function upsertDatabaseOAuthAppConfig(
+  input: {
+    platform: GrowthPlatform;
+    clientId: string;
+    clientSecret: string;
+  },
+  context?: StoreContext,
+) {
+  const supabase = client();
+  const scope = await getDefaultScope(context);
+  if (!supabase || !scope) return null;
+
+  const { data, error } = await supabase.rpc("upsert_oauth_app_config", {
+    p_platform: input.platform,
+    p_client_id: input.clientId,
+    p_client_secret: input.clientSecret,
+    p_user_id: scope.userId,
+  });
+
+  if (error) throw error;
+
+  const rows = (data ?? []) as OAuthAppConfigRow[];
+  return rows[0] ? mapOAuthAppConfig(rows[0]) : null;
+}
+
+export async function getDatabaseDeploymentSettings() {
+  const supabase = client();
+  if (!supabase) return null;
+
+  const { data, error } = await supabase.rpc("get_deployment_settings");
+
+  if (error) throw error;
+
+  const rows = (data ?? []) as DeploymentSettingsRow[];
+  return rows[0] ? mapDeploymentSettings(rows[0]) : null;
+}
+
+export async function upsertDatabaseDeploymentSettings(
+  input: {
+    publicBaseUrl: string;
+    redirectBaseUrl: string;
+  },
+  context?: StoreContext,
+) {
+  const supabase = client();
+  const scope = await getDefaultScope(context);
+  if (!supabase || !scope) return null;
+
+  const { data, error } = await supabase.rpc("upsert_deployment_settings", {
+    p_public_base_url: input.publicBaseUrl,
+    p_redirect_base_url: input.redirectBaseUrl,
+    p_user_id: scope.userId,
+  });
+
+  if (error) throw error;
+
+  const rows = (data ?? []) as DeploymentSettingsRow[];
+  return rows[0] ? mapDeploymentSettings(rows[0]) : null;
+}
+
+export async function saveDatabaseOAuthTokenSecret(input: {
+  name: string;
+  secret: string;
+  description?: string;
+}) {
+  const supabase = client();
+  if (!supabase) return null;
+
+  const { data, error } = await supabase.rpc("save_oauth_token_secret", {
+    p_name: input.name,
+    p_secret: input.secret,
+    p_description: input.description ?? null,
+  });
+
+  if (error) throw error;
+  return typeof data === "string" ? data : null;
 }
 
 export async function upsertDatabaseConnectorAccount(

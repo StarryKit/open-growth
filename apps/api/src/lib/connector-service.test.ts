@@ -209,3 +209,12 @@ describe("connector service", () => {
     ).toThrow("Missing enabled Publishing identity");
   });
 });
+
+it("flags platforms that still need OAuth configuration", () => {
+  expect(
+    listConnectorCapabilities().find((item) => item.platform === "x"),
+  ).toMatchObject({
+    status: "oauth-required",
+    supportedUseCases: expect.arrayContaining(["publish", "reply"]),
+  });
+});

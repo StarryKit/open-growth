@@ -18,7 +18,7 @@ const platformLabels: Record<GrowthPlatform, string> = {
   wechat: "WeChat",
 };
 
-const defaultPlatforms = ["x", "reddit", "hacker-news"] as GrowthPlatform[];
+const defaultPlatforms = ["x", "reddit"] as GrowthPlatform[];
 
 export function TrendsPage() {
   const [queries, setQueries] = useState<TrendQuery[]>([]);

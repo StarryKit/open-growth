@@ -126,8 +126,8 @@ export function Sidebar() {
         ? [
             ...navItems,
             {
-              label: "Collector Identities",
-              href: "/admin/collector-identities",
+              label: "Admin",
+              href: "/admin",
               icon: ShieldCheck,
             },
           ]
@@ -169,7 +169,7 @@ export function Sidebar() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [auth.session?.access_token]);
 
   const switchProject = (project: WorkspaceProject) => {
     if (project.id === activeProject?.id) {
