@@ -24,6 +24,10 @@ export default defineConfig(() => {
     server: {
       host: "0.0.0.0",
       port: 5173,
+      allowedHosts: ["dev.opengrowth.dev"],
+      hmr: {
+        clientPort: 8443,
+      },
       proxy: {
         "/api": "http://localhost:3001",
       },
