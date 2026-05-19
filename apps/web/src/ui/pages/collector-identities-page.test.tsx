@@ -209,4 +209,129 @@ describe("CollectorIdentitiesPage", () => {
       await screen.findByText(/unable to read connectors/i),
     ).toBeInTheDocument();
   });
+
+  it("shows save errors instead of blanking the page", async () => {
+    const user = userEvent.setup();
+    let deploymentSettingsCalls = 0;
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = input.toString();
+
+        if (url.endsWith("/api/projects")) {
+          return {
+            ok: true,
+            json: async () => ({
+              projects: [],
+              activeProject: null,
+            }),
+          };
+        }
+
+        if (url.endsWith("/api/admin/status")) {
+          return {
+            ok: true,
+            json: async () => ({ isAdmin: true }),
+          };
+        }
+
+        if (url.endsWith("/api/connectors")) {
+          return {
+            ok: true,
+            json: async () => ({
+              connectors: [
+                {
+                  platform: "x",
+                  displayName: "X",
+                  status: "oauth-required",
+                  supportsPublish: true,
+                  supportsEngagement: true,
+                  supportsTrends: true,
+                  supportedAuthModes: ["oauth", "api_key"],
+                  supportedUseCases: [
+                    "publish",
+                    "reply",
+                    "engagement",
+                    "trends",
+                  ],
+                  collectorModes: ["api_key"],
+                  dataSource: "X API adapter",
+                  limitation: "Requires OAuth.",
+                  connectionStatus: "needs-auth",
+                  publishingStatus: "needs-auth",
+                  collectorStatus: "not-configured",
+                  publishingIdentities: [],
+                  enabledPublishingIdentities: [],
+                },
+              ],
+            }),
+          };
+        }
+
+        if (url.endsWith("/api/admin/collector-identities")) {
+          return {
+            ok: true,
+            json: async () => ({
+              collectorIdentities: [],
+            }),
+          };
+        }
+
+        if (url.endsWith("/api/admin/oauth-apps")) {
+          return {
+            ok: true,
+            json: async () => ({
+              oauthApps: [],
+            }),
+          };
+        }
+
+        if (url.endsWith("/api/admin/deployment-settings")) {
+          deploymentSettingsCalls += 1;
+          if (deploymentSettingsCalls === 2) {
+            return {
+              ok: false,
+              status: 500,
+              json: async () => ({
+                error: "Unable to save deployment settings.",
+              }),
+            };
+          }
+
+          return {
+            ok: true,
+            json: async () => ({
+              deploymentSettings: {
+                publicBaseUrl: "http://localhost:5173",
+                redirectBaseUrl: "http://localhost:3001",
+              },
+            }),
+          };
+        }
+
+        return {
+          ok: true,
+          json: async () => ({ ok: true }),
+        };
+      }),
+    );
+
+    render(
+      <MemoryRouter>
+        <AuthProvider>
+          <WorkspaceProvider>
+            <CollectorIdentitiesPage />
+          </WorkspaceProvider>
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+
+    await screen.findByText("Runtime URLs");
+    await user.click(screen.getByRole("button", { name: /save deployment/i }));
+
+    expect(
+      await screen.findByText(/unable to save deployment settings/i),
+    ).toBeInTheDocument();
+  });
 });

@@ -147,69 +147,94 @@ export function CollectorIdentitiesPage() {
   const saveCollector = (endpoint: "save" | "test") => {
     startTransition(async () => {
       setMessage(null);
-      const path =
-        endpoint === "test"
-          ? "/api/admin/collector-identities/test"
-          : "/api/admin/collector-identities";
-      await apiJson(path, {
-        method: "POST",
-        body: JSON.stringify({
-          platform: selectedPlatform,
-          authMode,
-          credentialRef: credentialRef.trim() || undefined,
-          displayName: displayName.trim() || undefined,
-          ownerScope: "workspace",
-          adapterBackend:
-            authMode === "public"
-              ? "public_api"
-              : authMode === "browser_profile"
-                ? "opencli"
-                : authMode === "vendor"
-                  ? "vendor"
-                  : "official_api",
-          useCases: collectorUseCases.filter((useCase) =>
-            selectedConnector?.supportedUseCases.includes(useCase),
-          ),
-        }),
-      });
-      await loadData();
-      setMessage(
-        endpoint === "test"
-          ? "Collector identity tested."
-          : "Collector identity saved.",
-      );
+      setLoadError(null);
+      try {
+        const path =
+          endpoint === "test"
+            ? "/api/admin/collector-identities/test"
+            : "/api/admin/collector-identities";
+        await apiJson(path, {
+          method: "POST",
+          body: JSON.stringify({
+            platform: selectedPlatform,
+            authMode,
+            credentialRef: credentialRef.trim() || undefined,
+            displayName: displayName.trim() || undefined,
+            ownerScope: "workspace",
+            adapterBackend:
+              authMode === "public"
+                ? "public_api"
+                : authMode === "browser_profile"
+                  ? "opencli"
+                  : authMode === "vendor"
+                    ? "vendor"
+                    : "official_api",
+            useCases: collectorUseCases.filter((useCase) =>
+              selectedConnector?.supportedUseCases.includes(useCase),
+            ),
+          }),
+        });
+        await loadData();
+        setMessage(
+          endpoint === "test"
+            ? "Collector identity tested."
+            : "Collector identity saved.",
+        );
+      } catch (error) {
+        setLoadError(
+          error instanceof Error
+            ? error.message
+            : "Unable to save collector identity.",
+        );
+      }
     });
   };
 
   const saveOAuthApp = () => {
     startTransition(async () => {
       setMessage(null);
-      await apiJson("/api/admin/oauth-apps", {
-        method: "POST",
-        body: JSON.stringify({
-          platform: oauthPlatform,
-          clientId,
-          clientSecret: clientSecret.trim() || undefined,
-        }),
-      });
-      setClientSecret("");
-      await loadData();
-      setMessage("OAuth app saved.");
+      setLoadError(null);
+      try {
+        await apiJson("/api/admin/oauth-apps", {
+          method: "POST",
+          body: JSON.stringify({
+            platform: oauthPlatform,
+            clientId,
+            clientSecret: clientSecret.trim() || undefined,
+          }),
+        });
+        setClientSecret("");
+        await loadData();
+        setMessage("OAuth app saved.");
+      } catch (error) {
+        setLoadError(
+          error instanceof Error ? error.message : "Unable to save OAuth app.",
+        );
+      }
     });
   };
 
   const saveDeployment = () => {
     startTransition(async () => {
       setMessage(null);
-      await apiJson("/api/admin/deployment-settings", {
-        method: "POST",
-        body: JSON.stringify({
-          publicBaseUrl,
-          redirectBaseUrl,
-        }),
-      });
-      await loadData();
-      setMessage("Deployment settings saved.");
+      setLoadError(null);
+      try {
+        await apiJson("/api/admin/deployment-settings", {
+          method: "POST",
+          body: JSON.stringify({
+            publicBaseUrl,
+            redirectBaseUrl,
+          }),
+        });
+        await loadData();
+        setMessage("Deployment settings saved.");
+      } catch (error) {
+        setLoadError(
+          error instanceof Error
+            ? error.message
+            : "Unable to save deployment settings.",
+        );
+      }
     });
   };
 
@@ -259,7 +284,15 @@ export function CollectorIdentitiesPage() {
           </div>
           <button
             className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold dark:border-slate-800 dark:bg-slate-900"
-            onClick={() => void loadData()}
+            onClick={() =>
+              void loadData().catch((error) => {
+                setLoadError(
+                  error instanceof Error
+                    ? error.message
+                    : "Unable to refresh admin data.",
+                );
+              })
+            }
             type="button"
           >
             <RefreshCw className="size-4" />
