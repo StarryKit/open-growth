@@ -3,7 +3,8 @@ import { loadRootEnv } from "./env";
 
 loadRootEnv();
 
-const result = spawnSync("supabase", ["--workdir", "packages/db", "seed"], {
+const args = process.argv.slice(2);
+const result = spawnSync("supabase", ["--workdir", "packages/db", ...args], {
   env: process.env,
   stdio: "inherit",
 });

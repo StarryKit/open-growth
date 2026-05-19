@@ -70,6 +70,42 @@ The seeded local login is:
 - Email: `local-dev@open-growth.test`
 - Password: `open-growth-local`
 
+### Google OAuth on the VPS dev domain
+
+The VPS dev setup exposes the local Supabase Auth service under:
+
+```bash
+https://dev.opengrowth.dev:8443/auth
+```
+
+For Google sign-in, create a Google Cloud OAuth client with application type
+`Web application`, then configure this exact authorized redirect URI:
+
+```bash
+https://dev.opengrowth.dev:8443/auth/auth/v1/callback
+```
+
+The duplicated `/auth/auth` is intentional: the first `/auth` is the VPS
+reverse-proxy mount path from `VITE_SUPABASE_URL`; the second `/auth/v1/callback`
+is Supabase Auth's callback path.
+
+Put the Google OAuth values in the root `.env`:
+
+```bash
+SUPABASE_AUTH_GOOGLE_CLIENT_ID=...
+SUPABASE_AUTH_GOOGLE_SECRET=...
+```
+
+The `npm run db:*` scripts start Supabase through `scripts/supabase.ts`, which
+loads the root `.env` before invoking the Supabase CLI. Run Supabase through
+those scripts instead of calling `supabase --workdir packages/db ...` directly
+when you need local OAuth provider secrets.
+
+Do not commit Google OAuth secrets. After changing these values, restart the
+local Supabase stack so `packages/db/supabase/config.toml` is reloaded. If Google
+receives `client_id=env(SUPABASE_AUTH_GOOGLE_CLIENT_ID)`, the Supabase CLI did
+not receive the root `.env` values.
+
 Schema changes go in `packages/db/supabase/migrations/`. Create a new migration with:
 
 ```bash
