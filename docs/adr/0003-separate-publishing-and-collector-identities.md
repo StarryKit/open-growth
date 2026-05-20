@@ -75,7 +75,7 @@ OpenCLI is allowed as an adapter backend, not as the domain identity model. When
 
 ## Implementation Plan
 
-- **Affected paths**: `packages/shared/src/content.ts`, `packages/db/supabase/migrations/`, `packages/db/src/database-store.ts`, `apps/api/src/lib/connector-service.ts`, `apps/api/src/lib/domain-store.ts`, `apps/api/src/lib/outbox-worker.ts`, `apps/api/src/app.ts`, `apps/api/src/lib/env.ts`, `apps/web/src/components/sidebar.tsx`, `apps/web/src/ui/pages/connectors-page.tsx`, `apps/web/src/ui/pages/publish-page.tsx`, `apps/web/src/ui/pages/trends-page.tsx`, `.env.example`, `CONTEXT.md`, and `docs/prd/open-growth-prd.md`.
+- **Affected paths**: `packages/shared/src/content.ts`, `packages/db/supabase/migrations/`, `packages/db/src/database-store.ts`, `apps/api/src/lib/connector-service.ts`, `apps/api/src/lib/domain-store.ts`, `apps/api/src/lib/outbox-worker.ts`, `apps/api/src/app.ts`, `apps/api/src/lib/env.ts`, `apps/web/src/components/sidebar.tsx`, `apps/web/src/ui/pages/connectors-page.tsx`, `apps/web/src/ui/pages/publish-page.tsx`, `apps/web/src/ui/pages/trends-page.tsx`, `.env.dev.example`, `CONTEXT.md`, and `docs/prd/open-growth-prd.md`.
 - **Shared types**: add connector identity concepts for `identity_kind`, `auth_mode`, `use_cases`, and owner scope. Keep platform values in `GrowthPlatform`.
 - **Database**: add a migration that extends or replaces `connector_accounts` so records can represent user-owned Publishing identities and workspace/system Collector identities independently. Add a Workspace-level enablement relationship so a Workspace can enable one or more user-owned Publishing identities without copying credentials. Preserve RLS so users can read allowed connector status but cannot read secret values.
 - **Secrets**: continue storing only `credential_ref` or provider references in Postgres. Raw OAuth tokens, API keys, and browser profile secrets must stay in a server-side secret store or deployment secret provider.
@@ -91,7 +91,7 @@ OpenCLI is allowed as an adapter backend, not as the domain identity model. When
 ## Verification
 
 - [ ] `packages/shared/src/content.ts` defines connector identity kind, auth mode, use case, and owner scope types.
-- [ ] `.env.example` documents the admin allowlist environment variable for Collector identity management.
+- [ ] Development preview configuration documents the admin allowlist runtime variable for Collector identity management.
 - [ ] A Supabase migration can store a user-owned Publishing identity and an admin-managed Collector identity for the same platform without conflict.
 - [ ] A Workspace can enable one or more user-owned Publishing identities without owning or copying the credential.
 - [ ] Frontend connector status can display publishing and collector readiness separately for the same platform.

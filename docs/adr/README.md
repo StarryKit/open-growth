@@ -14,3 +14,4 @@ Architecture decisions for this repo live here.
 - [ADR-0002: Supabase product data and environment boundaries](./0002-supabase-domain-storage-and-outbox.md)
 - [ADR-0003: Separate publishing and collector identities](./0003-separate-publishing-and-collector-identities.md)
 - [ADR-0004: Content Repository MVP import, edit, and export workflow](./0004-content-repository-mvp.md)
+- [ADR-0005: Adopt remote development preview workflow](./0005-adopt-remote-development-preview-workflow.md)

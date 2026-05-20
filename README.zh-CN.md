@@ -55,22 +55,20 @@ open-growth/
 - 共享层: `packages/shared`
 - 工程化: TypeScript、Biome、Vitest
 
-## 本地开发
+## 开发预览
 
 ```bash
 npm install
-npm run dev
+cp .env.dev.example .env.dev
+pnpm dev
 ```
 
-- 前端地址: `http://localhost:5173`
-- 后端地址: `http://localhost:3001`
+在主 checkout 里，`pnpm dev` 会自动初始化稳定的 hostname slot、端口、instance 目录和 Cloudflare Tunnel。额外创建的 git worktree 需要先跑一次 `pnpm worktree:init`，再跑 `pnpm dev`。非 main slot 会使用 `a-dev.opengrowth.com` 这种横线形式的 hostname。
 
-如果你要跑数据库驱动的本地开发，先启动 Supabase CLI：
+如果只想在本机调试、不需要公开 HTTPS tunnel：
 
 ```bash
-npm run db:start
-npm run db:reset
-pnpm dev
+npm run dev:local
 ```
 
 常用命令:
@@ -78,8 +76,11 @@ pnpm dev
 ```bash
 npm run build
 npm run start
+npm run dev:local
 npm run db:start
+npm run db:stop
 npm run db:reset
+npm run db:status
 npm run lint
 npm run typecheck
 npm run test

@@ -33,8 +33,8 @@ file_size_limit = "500MiB"
 
 [auth]
 enabled = true
-site_url = "https://dev.opengrowth.dev:8443"
-additional_redirect_urls = ["https://dev.opengrowth.dev:8443", "http://127.0.0.1:5173", "http://localhost:5173", "http://127.0.0.1:5174", "http://localhost:5174"]
+site_url = "http://127.0.0.1:5173"
+additional_redirect_urls = ["http://127.0.0.1:5173", "http://localhost:5173", "http://127.0.0.1:5174", "http://localhost:5174"]
 jwt_expiry = 3600
 
 [auth.email]
@@ -47,9 +47,9 @@ content_path = "./supabase/templates/confirmation.tmpl"
 
 [auth.external.google]
 enabled = true
-client_id = "env(SUPABASE_AUTH_GOOGLE_CLIENT_ID)"
-secret = "env(SUPABASE_AUTH_GOOGLE_SECRET)"
-redirect_uri = "https://dev.opengrowth.dev:8443/auth/auth/v1/callback"
+client_id = "env(SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID)"
+secret = "env(SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET)"
+redirect_uri = "http://127.0.0.1:54321/auth/v1/callback"
 
 [analytics]
 enabled = false

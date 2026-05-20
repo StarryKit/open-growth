@@ -57,22 +57,20 @@ open-growth/
 - Shared layer: `packages/shared`
 - Tooling: TypeScript, Biome, Vitest
 
-## Local Development
+## Development Preview
 
 ```bash
 npm install
-npm run dev
+cp .env.dev.example .env.dev
+pnpm dev
 ```
 
-- Web app: `http://localhost:5173`
-- API server: `http://localhost:3001`
+In the main checkout, `pnpm dev` initializes the stable hostname slot, ports, instance directory, and Cloudflare Tunnel automatically. In secondary git worktrees, run `pnpm worktree:init` once before `pnpm dev`. Non-main slots use hyphenated hostnames such as `a-dev.opengrowth.com`.
 
-For database-backed local development, use the Supabase CLI stack:
+For local-only debugging without a public tunnel:
 
 ```bash
-npm run db:start
-npm run db:reset
-pnpm dev
+npm run dev:local
 ```
 
 Useful commands:
@@ -80,8 +78,11 @@ Useful commands:
 ```bash
 npm run build
 npm run start
+npm run dev:local
 npm run db:start
+npm run db:stop
 npm run db:reset
+npm run db:status
 npm run lint
 npm run typecheck
 npm run test

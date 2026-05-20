@@ -7,6 +7,8 @@ Open Growth is an npm workspace with a React/Vite web app, a Fastify API, and sh
 - Node.js 20 or newer
 - npm
 - Supabase CLI and Docker for database-backed local development
+- cloudflared
+- A Cloudflare API token for remote preview tunnels
 
 ## Setup
 
@@ -16,21 +18,59 @@ Install dependencies from the repository root:
 npm install
 ```
 
-Create the local environment file:
+Create the remote preview environment file:
 
 ```bash
-cp .env.example .env
+cp .env.dev.example .env.dev
 ```
 
 Open Growth requires Supabase for API auth, domain storage, and media storage. Local development should use the Supabase CLI stack so schema, RLS, Auth, Storage, and migrations match deployment.
 
 ## Environment
 
-`PORT` and `HOST` configure the Fastify API. Defaults are `3001` and `0.0.0.0`.
+The default development entrypoint is the remote preview workflow. In the main
+checkout, `pnpm dev` initializes the preview identity automatically on first
+run. For secondary git worktrees, initialize the worktree once:
 
-`VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` enable Supabase Auth in the web app. Put local Supabase CLI values or non-production branch values in `.env`; put production values in your deployment provider.
+```bash
+pnpm worktree:init
+```
 
-`SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` enable Supabase-backed API auth, domain storage, and media storage. Keep the service role key server-side only.
+Then start the full preview stack:
+
+```bash
+pnpm dev
+```
+
+`worktree:init` reads stable human-written values from `.env.dev`, selects a
+hostname slot, assigns stable ports, creates `.dev/worktree.json`, prepares
+`.dev/instances/<slot>/`, and creates or reuses the slot Cloudflare Tunnel.
+
+`pnpm dev` uses that worktree identity, creating it first when the current
+checkout is the main checkout. It starts Supabase if needed, resets the
+database, writes `.env.dev.local`, starts the API and web app, starts
+cloudflared, and exposes the app over HTTPS. Stopping `pnpm dev` stops the
+foreground app and tunnel processes; the worktree Supabase instance remains
+available until `pnpm db:stop` or `pnpm worktree:clean`.
+
+`.env.dev` contains stable values:
+
+- `OPEN_GROWTH_DEV_DOMAIN_BASE`
+- optional `OPEN_GROWTH_DEV_SLOT_CANDIDATES`
+- optional `OPEN_GROWTH_DEV_SLOT`
+- optional `OPEN_GROWTH_DEV_TUNNEL_NAME_PREFIX`
+- `CLOUDFLARE_API_TOKEN`
+- optional `CLOUDFLARE_ACCOUNT_ID`
+- optional `CLOUDFLARE_ZONE_ID`
+- optional local Google OAuth provider credentials
+
+`.env.dev.local` is generated and ignored by git. It contains selected ports, Supabase keys, `OPEN_GROWTH_DEV_PUBLIC_ORIGIN`, `VITE_SUPABASE_URL`, and API runtime values.
+
+`PORT` and `HOST` configure the Fastify API. The preview runner writes them dynamically.
+
+`VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` enable Supabase Auth in the web app. The preview runner points browser traffic at the selected public HTTPS origin, and the tunnel routes Supabase paths to the generated local Supabase API.
+
+`SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` enable Supabase-backed API auth, domain storage, and media storage. The preview runner points server traffic directly at the generated local Supabase API URL. Keep the service role key server-side only.
 
 `SUPABASE_STORAGE_BUCKET` configures the Supabase Storage bucket for content assets. The default is `content-assets`.
 
@@ -38,73 +78,103 @@ Open Growth requires Supabase for API auth, domain storage, and media storage. L
 
 `OPEN_GROWTH_OUTBOX_INTERVAL_MS` enables the outbox worker when set to a positive interval in milliseconds. The default `0` keeps the periodic worker disabled.
 
-The API loads root `.env` by default. Set `OPEN_GROWTH_ENV_FILE=/path/to/file` only when you intentionally want to run the API with another env file.
+The preview runner starts the API with `OPEN_GROWTH_ENV_FILE=.env.dev.local`.
 
-## Local Supabase Workflow
+## Remote Preview Workflow
 
 Use this for normal feature development and schema changes.
 
-1. Install the Supabase CLI and make sure Docker is running.
-2. Start local Supabase:
+1. Install the Supabase CLI, Docker, and cloudflared.
+2. Copy `.env.dev.example` to `.env.dev`.
+3. Fill the Cloudflare values in `.env.dev`.
+4. Initialize secondary git worktrees. Skip this in the main checkout if you
+   prefer `pnpm dev` to initialize automatically:
 
 ```bash
-npm run db:start
+pnpm worktree:init
 ```
 
-3. Copy `.env.example` to `.env`.
-4. Run `npm run db:status` and copy the printed `anon key` and `service_role key` into `.env`.
-5. Reset the database whenever you want a clean schema and seed:
-
-```bash
-npm run db:reset
-```
-
-6. Start the app:
+5. Start the preview stack:
 
 ```bash
 pnpm dev
 ```
+
+The runner selects a hostname slot from `OPEN_GROWTH_DEV_SLOT_CANDIDATES`, which defaults to the main slot plus `a-f`. If `OPEN_GROWTH_DEV_DOMAIN_BASE=dev.opengrowth.com`, the hostnames are:
+
+```text
+dev.opengrowth.com
+a-dev.opengrowth.com
+b-dev.opengrowth.com
+c-dev.opengrowth.com
+```
+
+The main checkout gets the main slot first. Git worktrees prefer alphabetical slots. Non-main hostnames use a hyphen prefix, such as `a-dev.opengrowth.com`, so they remain covered by a `*.opengrowth.com` certificate. Set `OPEN_GROWTH_DEV_SLOT=a` only when you want to force one checkout to a specific slot. Slot reservations live under `~/.cache/open-growth/dev-slots/`, and reservations for deleted worktree paths are reclaimed by `pnpm worktree:init`.
+
+`pnpm worktree:init`:
+
+1. Allocates stable web, API, and Supabase ports.
+2. Creates `.dev/instances/<slot>/`.
+3. Writes `.dev/worktree.json`.
+4. Copies `packages/db/supabase/` into the instance and patches Supabase config.
+5. Creates or reuses the slot Cloudflare Tunnel.
+6. Upserts DNS for the slot hostname.
+
+`pnpm dev`:
+
+1. Reuses the initialized worktree slot and ports.
+2. Starts Supabase if it is not already running.
+3. Resets the database from migrations and seed data.
+4. Writes `.env.dev.local`.
+5. Starts the API, Vite web app, and Cloudflare Tunnel.
+6. Prints the public URL, local web URL, local API health URL, and Supabase URL.
+
+Database lifecycle commands:
+
+```bash
+pnpm db:start   # start/reuse Supabase and reset the DB
+pnpm db:stop    # stop this worktree's Supabase instance
+pnpm db:reset   # start if needed, then reset the DB
+pnpm db:status  # show this worktree's Supabase status
+```
+
+When removing a worktree, run:
+
+```bash
+pnpm worktree:clean
+```
+
+This stops Supabase, removes `.dev/instances/<slot>/`, removes
+`.env.dev.local`, and releases the slot reservation.
 
 The seeded local login is:
 
 - Email: `local-dev@open-growth.test`
 - Password: `open-growth-local`
 
-### Google OAuth on the VPS dev domain
+### OAuth Redirects
 
-The VPS dev setup exposes the local Supabase Auth service under:
+Supabase Auth is exposed on the public preview origin under `/auth`. For Google sign-in, register each planned slot redirect URI:
 
-```bash
-https://dev.opengrowth.dev:8443/auth
+```text
+https://dev.opengrowth.com/auth/v1/callback
+https://a-dev.opengrowth.com/auth/v1/callback
+https://b-dev.opengrowth.com/auth/v1/callback
+https://c-dev.opengrowth.com/auth/v1/callback
 ```
 
-For Google sign-in, create a Google Cloud OAuth client with application type
-`Web application`, then configure this exact authorized redirect URI:
+The preview tunnel routes Supabase Auth, REST, Storage, Realtime, and GraphQL paths directly to the local Supabase API.
+
+Put the local Google OAuth values in `.env.dev`:
 
 ```bash
-https://dev.opengrowth.dev:8443/auth/auth/v1/callback
+SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID=...
+SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET=...
 ```
 
-The duplicated `/auth/auth` is intentional: the first `/auth` is the VPS
-reverse-proxy mount path from `VITE_SUPABASE_URL`; the second `/auth/v1/callback`
-is Supabase Auth's callback path.
-
-Put the Google OAuth values in the root `.env`:
-
-```bash
-SUPABASE_AUTH_GOOGLE_CLIENT_ID=...
-SUPABASE_AUTH_GOOGLE_SECRET=...
-```
-
-The `npm run db:*` scripts start Supabase through `scripts/supabase.ts`, which
-loads the root `.env` before invoking the Supabase CLI. Run Supabase through
-those scripts instead of calling `supabase --workdir packages/db ...` directly
-when you need local OAuth provider secrets.
-
-Do not commit Google OAuth secrets. After changing these values, restart the
-local Supabase stack so `packages/db/supabase/config.toml` is reloaded. If Google
-receives `client_id=env(SUPABASE_AUTH_GOOGLE_CLIENT_ID)`, the Supabase CLI did
-not receive the root `.env` values.
+Do not commit Google OAuth secrets. After changing these values, run
+`pnpm db:stop` and then `pnpm dev` or `pnpm db:start` so Supabase restarts with
+the new provider values.
 
 Schema changes go in `packages/db/supabase/migrations/`. Create a new migration with:
 
@@ -112,18 +182,18 @@ Schema changes go in `packages/db/supabase/migrations/`. Create a new migration 
 npm run db:new your_migration_name
 ```
 
-## Run Locally
+## Local-Only Fallback
 
-Start both the web app and API:
+The preview workflow is the default. When you intentionally do not need a public HTTPS tunnel, you can still run the local-only stack:
 
 ```bash
-npm run dev
+npm run dev:local
 ```
 
 - Web app: `http://localhost:5173`
 - API: `http://localhost:3001`
 
-The Vite dev server proxies `/api` requests to the API server.
+The Vite dev server proxies `/api` requests to the API server. Supabase browser traffic uses `VITE_SUPABASE_URL` directly.
 
 Run one workspace at a time when debugging a single side:
 
@@ -131,36 +201,6 @@ Run one workspace at a time when debugging a single side:
 npm run dev --workspace @open-growth/web
 npm run dev --workspace @open-growth/api
 ```
-
-## Supabase Branch And Production Workflow
-
-Supabase is the durable product storage boundary.
-
-Use Supabase preview or persistent branches for PR review, QA, or cross-machine testing. Do not point local development at production unless you are intentionally debugging a production-only issue.
-
-For a branch environment:
-
-1. Create or select a Supabase branch.
-2. Fill `.env` with the branch `SUPABASE_URL`, `VITE_SUPABASE_URL`, anon key, and service role key.
-4. Run:
-
-```bash
-pnpm dev
-```
-
-For production:
-
-1. Apply reviewed migrations to the production Supabase project or merge the Supabase branch.
-2. Configure the deployment provider with production Supabase URL, anon key, and service role key.
-3. Keep `SUPABASE_SERVICE_ROLE_KEY` server-side only.
-
-If you need to test manually against any Supabase project:
-
-1. Apply migrations from `packages/db/supabase/migrations/`.
-2. Load `packages/db/supabase/seed.sql` only for non-production demo data.
-3. Create the `content-assets` storage bucket if migrations were not used.
-4. Put the Supabase URL, anon key, service role key, and any needed user id in an env file.
-5. Run the app with that env file.
 
 ## Test Workflow
 
