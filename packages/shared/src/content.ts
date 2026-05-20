@@ -5,9 +5,12 @@ export type ContentAsset = {
   projectId?: string | null;
   filename: string;
   path: string;
+  currentStoragePath?: string;
+  kind?: ContentAssetKind;
   type: ContentAssetKind;
   size: number;
   updatedAt: string;
+  createdAt?: string;
   preview?: string;
   title?: string;
   description?: string;
@@ -16,7 +19,16 @@ export type ContentAsset = {
   platforms?: GrowthPlatform[];
   status?: ContentAssetStatus;
   usageCount?: number;
+  storageBucket?: string;
+  mimeType?: string;
+  sha256?: string;
+  body?: string;
+  bodyPreview?: string;
+  characterCount?: number;
+  editable?: boolean;
 };
+
+export type ContentAssetExportFormat = "text" | "markdown" | "file";
 
 export type ContentAssetStatus =
   | "uploading"

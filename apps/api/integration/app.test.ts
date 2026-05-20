@@ -29,4 +29,20 @@ describe("api app", () => {
     });
     await app.close();
   });
+
+  it("protects content repository write APIs", async () => {
+    const app = await buildApp();
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/content-assets/text-snippets",
+      payload: { title: "Untitled snippet", body: "" },
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toEqual({
+      error: "Supabase API credentials are not configured.",
+    });
+    await app.close();
+  });
 });

@@ -28,6 +28,12 @@ type SaveMediaInput = {
   context?: StoreContext;
 };
 
+type WriteMediaInput = {
+  storagePath: string;
+  buffer: Buffer;
+  mimeType?: string;
+};
+
 function supabaseStorageConfig() {
   const url = process.env.SUPABASE_URL;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -66,6 +72,7 @@ export async function saveMediaObject(
       filename,
       storageBucket: config.bucket,
       mimeType: input.mimeType,
+      kind: input.type,
     },
     input.context,
   );
@@ -102,6 +109,34 @@ export async function saveMediaObject(
     size: input.buffer.byteLength,
     type: input.type,
     preview: textPreview(input),
+  };
+}
+
+export async function writeSupabaseMediaObject(input: WriteMediaInput) {
+  const config = supabaseStorageConfig();
+
+  const supabase = createClient(config.url, config.serviceRoleKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  });
+  const { error } = await supabase.storage
+    .from(config.bucket)
+    .upload(input.storagePath, input.buffer, {
+      contentType: input.mimeType ?? "application/octet-stream",
+      upsert: true,
+    });
+
+  if (error) {
+    throw error;
+  }
+
+  return {
+    bucket: config.bucket,
+    path: input.storagePath,
+    size: input.buffer.byteLength,
+    sha256: sha256(input.buffer),
   };
 }
 

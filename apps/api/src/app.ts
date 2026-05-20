@@ -5,8 +5,11 @@ import multipart from "@fastify/multipart";
 import statik from "@fastify/static";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import {
+  assertVideoSize,
   getAssetType,
+  isEditableImage,
   isSupportedAsset,
+  isSupportedMimeForKind,
 } from "../../../packages/db/src/content-assets.js";
 import { isAdminUserId, resolveAuthContext } from "./lib/auth-service.js";
 import {
@@ -25,10 +28,12 @@ import {
   createContentAsset,
   createPublishedContent,
   createResponseDraftFromTrendPost,
+  createTextContentAsset,
   createTrendQuery,
   deleteContentAsset,
   deletePublishedContent,
   deleteTrendQuery,
+  getContentAsset,
   getEngagementOverview,
   getPublishedContent,
   getWorkspaceSummary,
@@ -48,7 +53,9 @@ import {
   setWorkspacePublishingIdentityEnabled,
   testCollectorIdentity,
   updateContentAsset,
+  updateContentAssetCurrentPath,
   updatePublishedContent,
+  updateTextContentAsset,
   updateTrendPost,
   updateTrendQuery,
   upsertCollectorIdentity,
@@ -57,6 +64,7 @@ import {
 import {
   readSupabaseMediaObject,
   saveMediaObject,
+  writeSupabaseMediaObject,
 } from "./lib/media-storage.js";
 import {
   listOAuthAppConfigs,
@@ -88,6 +96,7 @@ const contentTypes = new Map<string, string>([
 async function handleContentAssetUpload(
   request: FastifyRequest,
   reply: FastifyReply,
+  expectedKind?: "image" | "video",
 ) {
   try {
     const context = await resolveDomainContext(request, reply);
@@ -99,15 +108,33 @@ async function handleContentAssetUpload(
       return reply.code(400).send({ error: "Missing file field." });
     }
 
+    const kind = getAssetType(file.filename);
+
     if (!isSupportedAsset(file.filename)) {
       return reply.code(400).send({ error: "Unsupported file type." });
     }
 
     const buffer = await file.toBuffer();
+    if (expectedKind && kind !== expectedKind) {
+      return reply
+        .code(400)
+        .send({ error: `Expected a ${expectedKind} file.` });
+    }
+
+    if (!isSupportedMimeForKind(kind, file.mimetype)) {
+      return reply.code(400).send({ error: "Unsupported MIME type." });
+    }
+
+    if (kind === "video" && !assertVideoSize(buffer.byteLength)) {
+      return reply
+        .code(413)
+        .send({ error: "Video uploads must be 100MB or smaller." });
+    }
+
     const stored = await saveMediaObject({
       originalFilename: file.filename,
       buffer,
-      type: getAssetType(file.filename),
+      type: kind,
       mimeType: file.mimetype,
       context,
     });
@@ -117,6 +144,7 @@ async function handleContentAssetUpload(
         assetId: stored.assetId,
         filename: stored.filename,
         path: stored.path,
+        kind: stored.type,
         type: stored.type,
         size: stored.size,
         preview: stored.preview,
@@ -179,6 +207,55 @@ async function resolveAdminContext(
   }
 
   return context;
+}
+
+function markdownExport(title: string | undefined, body: string | undefined) {
+  const trimmedTitle = title?.trim();
+  const trimmedBody = body ?? "";
+
+  if (!trimmedTitle) {
+    return trimmedBody;
+  }
+
+  return `# ${trimmedTitle}\n\n${trimmedBody}`;
+}
+
+function assetContentType(asset: { filename: string; mimeType?: string }) {
+  if (asset.mimeType) {
+    return asset.mimeType;
+  }
+
+  const extension = extname(asset.filename).toLowerCase();
+  return contentTypes.get(extension) ?? "application/octet-stream";
+}
+
+function editedStoragePath(asset: {
+  id?: string;
+  filename: string;
+  path: string;
+  currentStoragePath?: string;
+}) {
+  const extension = extname(asset.filename).toLowerCase() || ".png";
+  const sourcePath = asset.path || asset.currentStoragePath || "";
+  const parts = sourcePath.split("/");
+
+  if (parts.length >= 6) {
+    return `${parts.slice(0, 4).join("/")}/edited/latest${extension}`;
+  }
+
+  if (parts.length >= 3) {
+    return `${parts.slice(0, 3).join("/")}/edited/latest${extension}`;
+  }
+
+  return `${asset.id ?? "asset"}/edited/latest${extension}`;
+}
+
+function proxyBaseUrl(request: FastifyRequest) {
+  const forwardedProto = request.headers["x-forwarded-proto"];
+  const proto = Array.isArray(forwardedProto)
+    ? forwardedProto[0]
+    : forwardedProto;
+  return `${proto ?? request.protocol}://${request.headers.host}`;
 }
 
 export async function buildApp() {
@@ -312,17 +389,77 @@ export async function buildApp() {
   );
 
   app.post("/api/content-assets", handleContentAssetUpload);
-
-  app.get("/api/content-assets", async (request, reply) => {
+  app.post("/api/content-assets/images", (request, reply) =>
+    handleContentAssetUpload(request, reply, "image"),
+  );
+  app.post("/api/content-assets/videos", (request, reply) =>
+    handleContentAssetUpload(request, reply, "video"),
+  );
+  app.post<{
+    Body: {
+      title?: string;
+      body?: string;
+      tags?: string[];
+      description?: string;
+    };
+  }>("/api/content-assets/text-snippets", async (request, reply) => {
     const context = await resolveDomainContext(request, reply);
     if (!context) return;
 
     try {
-      return { assets: await listContentAssets(context) };
+      const asset = await createTextContentAsset(
+        {
+          title: request.body?.title,
+          body: request.body?.body,
+          tags: request.body?.tags,
+          description: request.body?.description,
+        },
+        context,
+      );
+
+      return reply.code(201).send({ asset });
+    } catch {
+      return reply.code(500).send({ error: "Unable to create text snippet." });
+    }
+  });
+
+  app.get<{
+    Querystring: {
+      kind?: "text" | "image" | "video";
+      q?: string;
+      tag?: string;
+    };
+  }>("/api/content-assets", async (request, reply) => {
+    const context = await resolveDomainContext(request, reply);
+    if (!context) return;
+
+    try {
+      return {
+        assets: await listContentAssets(context, {
+          kind: request.query.kind,
+          q: request.query.q,
+          tag: request.query.tag,
+        }),
+      };
     } catch {
       return reply.code(500).send({ error: "Unable to read content assets." });
     }
   });
+
+  app.get<{ Params: { id: string } }>(
+    "/api/content-assets/:id",
+    async (request, reply) => {
+      const context = await resolveDomainContext(request, reply);
+      if (!context) return;
+
+      const asset = await getContentAsset(request.params.id, context);
+      if (!asset) {
+        return reply.code(404).send({ error: "Content asset not found." });
+      }
+
+      return { asset };
+    },
+  );
 
   app.get<{ Params: { id: string } }>(
     "/api/content-assets/:id/blob",
@@ -330,27 +467,51 @@ export async function buildApp() {
       const context = await resolveDomainContext(request, reply);
       if (!context) return;
 
-      const assets = await listContentAssets(context);
-      const asset = assets.find(
-        (candidate) => candidate.id === request.params.id,
-      );
+      const asset = await getContentAsset(request.params.id, context);
 
       if (!asset) {
         return reply.code(404).send({ error: "Content asset not found." });
       }
 
-      const extension = extname(asset.filename).toLowerCase();
-      const contentType =
-        contentTypes.get(extension) ?? "application/octet-stream";
+      if (asset.kind === "text") {
+        return reply
+          .code(400)
+          .send({ error: "Text snippets do not have blobs." });
+      }
 
-      const buffer = await readSupabaseMediaObject(asset.path);
+      const buffer = await readSupabaseMediaObject(
+        asset.currentStoragePath || asset.path,
+      );
       if (!buffer) {
         return reply.code(404).send({ error: "File not found." });
       }
 
       reply.header("Cache-Control", "no-store");
       reply.header("Content-Length", buffer.byteLength.toString());
-      reply.header("Content-Type", contentType);
+      reply.header("Content-Type", assetContentType(asset));
+      return reply.send(buffer);
+    },
+  );
+
+  app.get<{ Params: { id: string } }>(
+    "/api/content-assets/:id/original",
+    async (request, reply) => {
+      const context = await resolveDomainContext(request, reply);
+      if (!context) return;
+
+      const asset = await getContentAsset(request.params.id, context);
+      if (!asset) {
+        return reply.code(404).send({ error: "Content asset not found." });
+      }
+
+      if (!asset.path) {
+        return reply.code(400).send({ error: "Asset has no original file." });
+      }
+
+      const buffer = await readSupabaseMediaObject(asset.path);
+      reply.header("Cache-Control", "no-store");
+      reply.header("Content-Length", buffer.byteLength.toString());
+      reply.header("Content-Type", assetContentType(asset));
       return reply.send(buffer);
     },
   );
@@ -387,6 +548,158 @@ export async function buildApp() {
     }
 
     return { asset };
+  });
+
+  app.patch<{
+    Params: { id: string };
+    Body: {
+      title?: string;
+      body?: string;
+      tags?: string[];
+      description?: string;
+    };
+  }>("/api/content-assets/:id/text", async (request, reply) => {
+    const context = await resolveDomainContext(request, reply);
+    if (!context) return;
+
+    const asset = await updateTextContentAsset(
+      request.params.id,
+      {
+        title: request.body.title,
+        body: request.body.body,
+        tags: request.body.tags,
+        description: request.body.description,
+      },
+      context,
+    );
+
+    if (!asset) {
+      return reply.code(404).send({ error: "Text snippet not found." });
+    }
+
+    return { asset };
+  });
+
+  app.post<{ Params: { id: string } }>(
+    "/api/content-assets/:id/image-edits",
+    async (request, reply) => {
+      const context = await resolveDomainContext(request, reply);
+      if (!context) return;
+
+      const asset = await getContentAsset(request.params.id, context);
+      if (!asset || asset.kind !== "image") {
+        return reply.code(404).send({ error: "Image asset not found." });
+      }
+
+      if (!isEditableImage(asset.filename)) {
+        return reply
+          .code(400)
+          .send({ error: "GIF and SVG images are not editable." });
+      }
+
+      const file = await request.file();
+      if (!file) {
+        return reply.code(400).send({ error: "Missing file field." });
+      }
+
+      if (!isSupportedMimeForKind("image", file.mimetype)) {
+        return reply.code(400).send({ error: "Unsupported MIME type." });
+      }
+
+      const buffer = await file.toBuffer();
+      const storagePath = editedStoragePath(asset);
+      await writeSupabaseMediaObject({
+        storagePath,
+        buffer,
+        mimeType: file.mimetype,
+      });
+
+      const editStateField = file.fields.editState as
+        | { value?: string }
+        | undefined;
+      const editState = editStateField?.value
+        ? JSON.parse(editStateField.value)
+        : undefined;
+      const updated = await updateContentAssetCurrentPath(
+        request.params.id,
+        {
+          currentStoragePath: storagePath,
+          byteSize: buffer.byteLength,
+          mimeType: file.mimetype,
+          editState,
+        },
+        context,
+      );
+
+      return { asset: updated };
+    },
+  );
+
+  app.post<{
+    Params: { id: string };
+    Body: { target?: "current" | "original" };
+  }>("/api/content-assets/:id/copy-url", async (request, reply) => {
+    const context = await resolveDomainContext(request, reply);
+    if (!context) return;
+
+    const asset = await getContentAsset(request.params.id, context);
+    if (!asset) {
+      return reply.code(404).send({ error: "Content asset not found." });
+    }
+
+    if (asset.kind !== "image") {
+      return reply.code(400).send({ error: "Only images support Copy URL." });
+    }
+
+    const target = request.body?.target === "original" ? "original" : "blob";
+    const url = `${proxyBaseUrl(request)}/api/content-assets/${asset.id}/${target}`;
+
+    return {
+      url,
+      expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    };
+  });
+
+  app.post<{
+    Params: { id: string };
+    Body: { format?: "text" | "markdown" | "file" };
+  }>("/api/content-assets/:id/export", async (request, reply) => {
+    const context = await resolveDomainContext(request, reply);
+    if (!context) return;
+
+    const asset = await getContentAsset(request.params.id, context);
+    if (!asset) {
+      return reply.code(404).send({ error: "Content asset not found." });
+    }
+
+    if (asset.kind === "text") {
+      const format = request.body?.format ?? "markdown";
+      if (!["text", "markdown"].includes(format)) {
+        return reply
+          .code(400)
+          .send({ error: "Unsupported text export format." });
+      }
+
+      const content =
+        format === "text"
+          ? (asset.body ?? "")
+          : markdownExport(asset.title, asset.body);
+
+      return {
+        content,
+        filename: `${asset.title || asset.filename || "snippet"}.md`,
+        mimeType:
+          format === "text"
+            ? "text/plain; charset=utf-8"
+            : "text/markdown; charset=utf-8",
+      };
+    }
+
+    return {
+      downloadUrl: `/api/content-assets/${asset.id}/blob`,
+      filename: asset.filename,
+      mimeType: assetContentType(asset),
+    };
   });
 
   app.delete<{ Params: { id: string } }>(

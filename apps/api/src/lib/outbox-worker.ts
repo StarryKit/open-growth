@@ -135,6 +135,12 @@ async function processStorageDeleteEvent(
   }
 
   await deleteSupabaseMediaObject(storagePath);
+  if (
+    typeof event.payload.currentStoragePath === "string" &&
+    event.payload.currentStoragePath !== storagePath
+  ) {
+    await deleteSupabaseMediaObject(event.payload.currentStoragePath);
+  }
   await completeDatabaseContentAssetDeletion(event.aggregateId, context);
 }
 

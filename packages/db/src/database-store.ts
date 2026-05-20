@@ -44,12 +44,15 @@ type ContentAssetRow = {
   id: string;
   workspace_id?: string;
   project_id: string;
+  kind?: ContentAsset["kind"] | null;
   original_filename: string;
   storage_bucket: string | null;
   storage_path: string | null;
+  current_storage_path?: string | null;
   mime_type: string | null;
   byte_size: number | null;
   sha256: string | null;
+  created_at?: string;
   updated_at: string;
   preview: string | null;
   title: string | null;
@@ -59,6 +62,15 @@ type ContentAssetRow = {
   platforms: GrowthPlatform[];
   status: ContentAsset["status"];
   usage_count: number;
+};
+
+type ContentAssetTextRow = {
+  asset_id: string;
+  workspace_id: string;
+  project_id: string;
+  body_markdown: string;
+  body_preview: string;
+  character_count: number;
 };
 
 type EngagementSnapshotRow = {
@@ -237,6 +249,9 @@ export type PreparedDatabaseContentAssetUpload = {
   storageBucket: string;
   storagePath: string;
 };
+
+const contentAssetColumns =
+  "id, workspace_id, project_id, kind, original_filename, storage_bucket, storage_path, current_storage_path, mime_type, byte_size, sha256, created_at, updated_at, preview, title, description, tags, source, platforms, status, usage_count";
 
 type PlatformTargetRow = {
   id: string;
@@ -470,16 +485,28 @@ export async function deleteDatabaseProject(
   return true;
 }
 
-function mapAsset(row: ContentAssetRow): ContentAsset {
+function mapAsset(
+  row: ContentAssetRow,
+  text?: ContentAssetTextRow | null,
+): ContentAsset {
+  const kind = row.kind ?? getAssetType(row.original_filename);
+  const currentStoragePath = row.current_storage_path ?? row.storage_path ?? "";
+  const extension = row.original_filename
+    .slice(row.original_filename.lastIndexOf("."))
+    .toLowerCase();
+
   return {
     id: row.id,
     projectId: row.project_id,
     filename: row.original_filename,
     path: row.storage_path ?? "",
-    type: getAssetType(row.original_filename),
+    currentStoragePath,
+    kind,
+    type: kind,
     size: row.byte_size ?? 0,
+    createdAt: row.created_at,
     updatedAt: row.updated_at,
-    preview: row.preview ?? undefined,
+    preview: text?.body_preview ?? row.preview ?? undefined,
     title: row.title ?? undefined,
     description: row.description ?? undefined,
     tags: row.tags,
@@ -487,10 +514,234 @@ function mapAsset(row: ContentAssetRow): ContentAsset {
     platforms: row.platforms,
     status: row.status,
     usageCount: row.usage_count,
+    storageBucket: row.storage_bucket ?? undefined,
+    mimeType: row.mime_type ?? undefined,
+    sha256: row.sha256 ?? undefined,
+    body: text?.body_markdown,
+    bodyPreview: text?.body_preview,
+    characterCount: text?.character_count,
+    editable: kind === "image" ? ![".gif", ".svg"].includes(extension) : true,
   };
 }
 
-export async function listDatabaseContentAssets(context?: StoreContext) {
+async function textRowsByAssetId(
+  assetIds: string[],
+  scope: DatabaseScope,
+  supabase: NonNullable<ReturnType<typeof client>>,
+) {
+  if (assetIds.length === 0) {
+    return new Map<string, ContentAssetTextRow>();
+  }
+
+  const { data, error } = await supabase
+    .from("content_asset_texts")
+    .select(
+      "asset_id, workspace_id, project_id, body_markdown, body_preview, character_count",
+    )
+    .eq("workspace_id", scope.workspaceId)
+    .eq("project_id", scope.projectId)
+    .in("asset_id", assetIds);
+
+  if (error) throw error;
+
+  return new Map(
+    ((data ?? []) as ContentAssetTextRow[]).map((row) => [row.asset_id, row]),
+  );
+}
+
+export async function listDatabaseContentAssets(
+  context?: StoreContext,
+  filters?: { kind?: ContentAsset["kind"]; q?: string; tag?: string },
+) {
+  const supabase = client();
+  const scope = await getDefaultScope(context);
+
+  if (!supabase || !scope) return null;
+
+  let query = supabase
+    .from("content_assets")
+    .select(contentAssetColumns)
+    .eq("project_id", scope.projectId)
+    .order("updated_at", { ascending: false });
+
+  if (filters?.kind) {
+    query = query.eq("kind", filters.kind);
+  }
+
+  if (filters?.tag) {
+    query = query.contains("tags", [filters.tag]);
+  }
+
+  const { data, error } = await query;
+
+  if (error) throw error;
+  const rows = (data ?? []) as ContentAssetRow[];
+  const textRows = await textRowsByAssetId(
+    rows.map((row) => row.id),
+    scope,
+    supabase,
+  );
+  const assets = rows.map((row) => mapAsset(row, textRows.get(row.id)));
+
+  if (!filters?.q?.trim()) {
+    return assets;
+  }
+
+  const q = filters.q.trim().toLowerCase();
+  return assets.filter((asset) =>
+    [
+      asset.title,
+      asset.filename,
+      asset.description,
+      asset.preview,
+      asset.body,
+      ...(asset.tags ?? []),
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase()
+      .includes(q),
+  );
+}
+
+export async function getDatabaseContentAsset(
+  assetId: string,
+  context?: StoreContext,
+) {
+  const assets = await listDatabaseContentAssets(context);
+  return assets?.find((asset) => asset.id === assetId) ?? null;
+}
+
+function bodyPreview(body: string) {
+  return body.replace(/\s+/g, " ").trim().slice(0, 300);
+}
+
+export async function insertDatabaseTextContentAsset(
+  input: {
+    title?: string;
+    body?: string;
+    tags?: string[];
+    description?: string;
+  },
+  context?: StoreContext,
+) {
+  const supabase = client();
+  const scope = await getDefaultScope(context);
+
+  if (!supabase || !scope) return null;
+
+  const body = input.body ?? "";
+  const title = input.title?.trim() || "Untitled snippet";
+  const { data, error } = await supabase
+    .from("content_assets")
+    .insert({
+      workspace_id: scope.workspaceId,
+      project_id: scope.projectId,
+      kind: "text",
+      original_filename: `${title}.md`,
+      title,
+      description: input.description ?? null,
+      tags: input.tags ?? [],
+      source: "repository",
+      platforms: [],
+      status: "ready",
+      preview: bodyPreview(body),
+      created_by: scope.userId,
+    })
+    .select(contentAssetColumns)
+    .single();
+
+  if (error) throw error;
+  const assetRow = data as ContentAssetRow;
+  const textRow: ContentAssetTextRow = {
+    asset_id: assetRow.id,
+    workspace_id: scope.workspaceId,
+    project_id: scope.projectId,
+    body_markdown: body,
+    body_preview: bodyPreview(body),
+    character_count: body.length,
+  };
+
+  const { error: textError } = await supabase
+    .from("content_asset_texts")
+    .insert(textRow);
+
+  if (textError) throw textError;
+  return mapAsset(assetRow, textRow);
+}
+
+export async function updateDatabaseTextContentAsset(
+  assetId: string,
+  patch: {
+    title?: string;
+    body?: string;
+    tags?: string[];
+    description?: string;
+  },
+  context?: StoreContext,
+) {
+  const supabase = client();
+  const scope = await getDefaultScope(context);
+
+  if (!supabase || !scope) return null;
+
+  const current = await getDatabaseContentAsset(assetId, context);
+  if (!current || current.kind !== "text") {
+    return null;
+  }
+
+  const body = patch.body ?? current.body ?? "";
+  const preview = bodyPreview(body);
+  const { data, error } = await supabase
+    .from("content_assets")
+    .update({
+      title: patch.title,
+      description: patch.description,
+      tags: patch.tags,
+      preview,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("workspace_id", scope.workspaceId)
+    .eq("project_id", scope.projectId)
+    .eq("id", assetId)
+    .eq("kind", "text")
+    .select(contentAssetColumns)
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!data) return null;
+
+  const textValues = {
+    asset_id: assetId,
+    workspace_id: scope.workspaceId,
+    project_id: scope.projectId,
+    body_markdown: body,
+    body_preview: preview,
+    character_count: body.length,
+    updated_at: new Date().toISOString(),
+  };
+  const { data: textData, error: textError } = await supabase
+    .from("content_asset_texts")
+    .upsert(textValues, { onConflict: "asset_id" })
+    .select(
+      "asset_id, workspace_id, project_id, body_markdown, body_preview, character_count",
+    )
+    .single();
+
+  if (textError) throw textError;
+  return mapAsset(data as ContentAssetRow, textData as ContentAssetTextRow);
+}
+
+export async function updateDatabaseContentAssetCurrentPath(
+  assetId: string,
+  input: {
+    currentStoragePath: string;
+    byteSize?: number;
+    mimeType?: string;
+    editState?: unknown;
+  },
+  context?: StoreContext,
+) {
   const supabase = client();
   const scope = await getDefaultScope(context);
 
@@ -498,14 +749,38 @@ export async function listDatabaseContentAssets(context?: StoreContext) {
 
   const { data, error } = await supabase
     .from("content_assets")
-    .select(
-      "id, project_id, original_filename, storage_path, byte_size, updated_at, preview, title, description, tags, source, platforms, status, usage_count",
-    )
+    .update({
+      current_storage_path: input.currentStoragePath,
+      byte_size: input.byteSize,
+      mime_type: input.mimeType,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("workspace_id", scope.workspaceId)
     .eq("project_id", scope.projectId)
-    .order("updated_at", { ascending: false });
+    .eq("id", assetId)
+    .eq("kind", "image")
+    .select(contentAssetColumns)
+    .maybeSingle();
 
   if (error) throw error;
-  return ((data ?? []) as ContentAssetRow[]).map(mapAsset);
+  if (!data) return null;
+
+  const { error: editError } = await supabase
+    .from("content_asset_image_edits")
+    .upsert(
+      {
+        asset_id: assetId,
+        workspace_id: scope.workspaceId,
+        project_id: scope.projectId,
+        edited_storage_path: input.currentStoragePath,
+        edit_state: input.editState ?? null,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "asset_id" },
+    );
+
+  if (editError) throw editError;
+  return mapAsset(data as ContentAssetRow);
 }
 
 export async function prepareDatabaseContentAssetUpload(
@@ -513,6 +788,7 @@ export async function prepareDatabaseContentAssetUpload(
     filename: string;
     storageBucket: string;
     mimeType?: string;
+    kind?: ContentAsset["kind"];
   },
   context?: StoreContext,
 ): Promise<PreparedDatabaseContentAssetUpload | null> {
@@ -530,6 +806,7 @@ export async function prepareDatabaseContentAssetUpload(
       p_storage_bucket: input.storageBucket,
       p_original_filename: input.filename,
       p_mime_type: input.mimeType ?? null,
+      p_kind: input.kind ?? getAssetType(input.filename),
     },
   );
 
@@ -542,6 +819,7 @@ export async function prepareDatabaseContentAssetUpload(
     .insert({
       workspace_id: scope.workspaceId,
       project_id: scope.projectId,
+      kind: input.kind ?? getAssetType(input.filename),
       storage_bucket: input.storageBucket,
       mime_type: input.mimeType,
       original_filename: input.filename,
@@ -557,7 +835,7 @@ export async function prepareDatabaseContentAssetUpload(
   if (error) throw error;
 
   const asset = data as ContentAssetRow;
-  const storagePath = `${asset.workspace_id ?? scope.workspaceId}/${asset.project_id}/${asset.id}/${asset.original_filename}`;
+  const storagePath = `${scope.userId}/${asset.workspace_id ?? scope.workspaceId}/${asset.project_id}/${asset.id}/original/${asset.original_filename}`;
 
   return {
     assetId: asset.id,
@@ -576,6 +854,7 @@ export async function insertDatabaseContentAsset(
     path: string;
     size: number;
     type?: ContentAsset["type"];
+    kind?: ContentAsset["kind"];
     preview?: string;
     storageBucket?: string;
     mimeType?: string;
@@ -591,8 +870,10 @@ export async function insertDatabaseContentAsset(
   const values = {
     workspace_id: scope.workspaceId,
     project_id: scope.projectId,
+    kind: input.kind ?? input.type ?? getAssetType(input.filename),
     storage_bucket: input.storageBucket,
     storage_path: input.path,
+    current_storage_path: input.path,
     byte_size: input.size,
     mime_type: input.mimeType,
     sha256: input.sha256,
@@ -632,6 +913,8 @@ export async function insertDatabaseContentAsset(
         .update({
           storage_bucket: values.storage_bucket,
           storage_path: values.storage_path,
+          current_storage_path: values.current_storage_path,
+          kind: values.kind,
           byte_size: values.byte_size,
           mime_type: values.mime_type,
           sha256: values.sha256,
@@ -645,11 +928,7 @@ export async function insertDatabaseContentAsset(
         .eq("id", input.assetId)
     : supabase.from("content_assets").insert(values);
 
-  const { data, error } = await query
-    .select(
-      "id, project_id, original_filename, storage_path, byte_size, updated_at, preview, title, description, tags, source, platforms, status, usage_count",
-    )
-    .single();
+  const { data, error } = await query.select(contentAssetColumns).single();
 
   if (error) throw error;
   return mapAsset(data as ContentAssetRow);
@@ -683,9 +962,7 @@ export async function updateDatabaseContentAsset(
     })
     .eq("project_id", scope.projectId)
     .eq("id", assetId)
-    .select(
-      "id, project_id, original_filename, storage_path, byte_size, updated_at, preview, title, description, tags, source, platforms, status, usage_count",
-    )
+    .select(contentAssetColumns)
     .maybeSingle();
 
   if (error) throw error;
@@ -720,7 +997,7 @@ export async function deleteDatabaseContentAsset(
     .update({ status: "deleting", updated_at: timestamp })
     .eq("project_id", scope.projectId)
     .eq("id", assetId)
-    .select("id, storage_path")
+    .select("id, storage_path, current_storage_path")
     .maybeSingle();
 
   if (error) throw error;
@@ -732,7 +1009,10 @@ export async function deleteDatabaseContentAsset(
     event_type: "storage.delete",
     aggregate_type: "content_asset",
     aggregate_id: assetId,
-    payload: { storagePath: data.storage_path },
+    payload: {
+      storagePath: data.storage_path,
+      currentStoragePath: data.current_storage_path,
+    },
     idempotency_key: `storage.delete:${assetId}`,
     available_at: timestamp,
   });
@@ -756,9 +1036,7 @@ export async function completeDatabaseContentAssetDeletion(
     .eq("workspace_id", scope.workspaceId)
     .eq("project_id", scope.projectId)
     .eq("id", assetId)
-    .select(
-      "id, project_id, original_filename, storage_path, byte_size, updated_at, preview, title, description, tags, source, platforms, status, usage_count",
-    )
+    .select(contentAssetColumns)
     .maybeSingle();
 
   if (error) throw error;

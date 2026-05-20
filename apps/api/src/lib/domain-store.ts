@@ -4,10 +4,12 @@ import {
   deleteDatabasePublishedContent,
   deleteDatabaseTrendQuery,
   finishDatabaseTrendRun,
+  getDatabaseContentAsset,
   insertDatabaseContentAsset,
   insertDatabaseEngagementSnapshot,
   insertDatabaseOutboxEvent,
   insertDatabasePublishedContent,
+  insertDatabaseTextContentAsset,
   insertDatabaseTrendQuery,
   insertDatabaseTrendRun,
   isDatabaseStoreEnabled,
@@ -24,7 +26,9 @@ import {
   scheduleDatabasePublishedContent,
   setDatabaseWorkspacePublishingIdentityEnabled,
   updateDatabaseContentAsset,
+  updateDatabaseContentAssetCurrentPath,
   updateDatabasePublishedContent,
+  updateDatabaseTextContentAsset,
   updateDatabaseTrendPost,
   updateDatabaseTrendQuery,
   upsertDatabaseCollectorIdentity,
@@ -106,9 +110,22 @@ function engagementRate(metrics: EngagementMetrics) {
   );
 }
 
-export async function listContentAssets(context?: DomainContext) {
+export async function listContentAssets(
+  context?: DomainContext,
+  filters?: { kind?: ContentAsset["kind"]; q?: string; tag?: string },
+) {
   assertDatabaseStoreConfigured();
-  return assertDatabaseResult(await listDatabaseContentAssets(context));
+  return assertDatabaseResult(
+    await listDatabaseContentAssets(context, filters),
+  );
+}
+
+export async function getContentAsset(
+  assetId: string,
+  context?: DomainContext,
+) {
+  assertDatabaseStoreConfigured();
+  return getDatabaseContentAsset(assetId, context);
 }
 
 export async function createContentAsset(
@@ -116,6 +133,7 @@ export async function createContentAsset(
     filename: string;
     path: string;
     type: ContentAsset["type"];
+    kind?: ContentAsset["kind"];
     size: number;
     assetId?: string;
     preview?: string;
@@ -127,6 +145,21 @@ export async function createContentAsset(
 ) {
   assertDatabaseStoreConfigured();
   return assertDatabaseResult(await insertDatabaseContentAsset(input, context));
+}
+
+export async function createTextContentAsset(
+  input: {
+    title?: string;
+    body?: string;
+    tags?: string[];
+    description?: string;
+  },
+  context?: DomainContext,
+) {
+  assertDatabaseStoreConfigured();
+  return assertDatabaseResult(
+    await insertDatabaseTextContentAsset(input, context),
+  );
 }
 
 export async function updateContentAsset(
@@ -141,6 +174,34 @@ export async function updateContentAsset(
 ) {
   assertDatabaseStoreConfigured();
   return updateDatabaseContentAsset(assetId, patch, context);
+}
+
+export async function updateTextContentAsset(
+  assetId: string,
+  patch: {
+    title?: string;
+    body?: string;
+    tags?: string[];
+    description?: string;
+  },
+  context?: DomainContext,
+) {
+  assertDatabaseStoreConfigured();
+  return updateDatabaseTextContentAsset(assetId, patch, context);
+}
+
+export async function updateContentAssetCurrentPath(
+  assetId: string,
+  input: {
+    currentStoragePath: string;
+    byteSize?: number;
+    mimeType?: string;
+    editState?: unknown;
+  },
+  context?: DomainContext,
+) {
+  assertDatabaseStoreConfigured();
+  return updateDatabaseContentAssetCurrentPath(assetId, input, context);
 }
 
 export async function deleteContentAsset(

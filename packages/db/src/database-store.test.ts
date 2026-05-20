@@ -121,6 +121,114 @@ describe("database store", () => {
     });
   });
 
+  it("creates text content assets with Markdown metadata", async () => {
+    process.env.SUPABASE_URL = "https://example.supabase.co";
+    process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role";
+
+    const insertedTextRows: unknown[] = [];
+    const from = vi.fn((table: string) => {
+      if (table === "workspace_members") {
+        return {
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          limit: vi.fn().mockReturnThis(),
+          maybeSingle: vi.fn().mockResolvedValue({
+            data: { workspace_id: "workspace-1" },
+            error: null,
+          }),
+        };
+      }
+
+      if (table === "projects") {
+        return {
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          maybeSingle: vi.fn().mockResolvedValue({
+            data: { id: "project-1" },
+            error: null,
+          }),
+        };
+      }
+
+      if (table === "content_assets") {
+        return {
+          insert: vi.fn(() => ({
+            select: vi.fn(() => ({
+              single: vi.fn().mockResolvedValue({
+                data: {
+                  id: "asset-1",
+                  workspace_id: "workspace-1",
+                  project_id: "project-1",
+                  kind: "text",
+                  original_filename: "Launch copy.md",
+                  storage_bucket: null,
+                  storage_path: null,
+                  current_storage_path: null,
+                  mime_type: null,
+                  byte_size: null,
+                  sha256: null,
+                  created_at: "2026-05-19T00:00:00.000Z",
+                  updated_at: "2026-05-19T00:00:00.000Z",
+                  preview: "Hello launch",
+                  title: "Launch copy",
+                  description: null,
+                  tags: ["launch"],
+                  source: "repository",
+                  platforms: [],
+                  status: "ready",
+                  usage_count: 0,
+                },
+                error: null,
+              }),
+            })),
+          })),
+        };
+      }
+
+      if (table === "content_asset_texts") {
+        return {
+          insert: vi.fn((row) => {
+            insertedTextRows.push(row);
+            return Promise.resolve({ error: null });
+          }),
+        };
+      }
+
+      throw new Error(`Unexpected table ${table}`);
+    });
+
+    vi.doMock("@supabase/supabase-js", () => ({
+      createClient: () => ({ from }),
+    }));
+
+    const { insertDatabaseTextContentAsset } = await import(
+      "./database-store.js"
+    );
+    const asset = await insertDatabaseTextContentAsset(
+      {
+        title: "Launch copy",
+        body: "Hello launch",
+        tags: ["launch"],
+      },
+      { userId: "user-1", activeProjectId: "project-1" },
+    );
+
+    expect(insertedTextRows).toEqual([
+      expect.objectContaining({
+        asset_id: "asset-1",
+        body_markdown: "Hello launch",
+        body_preview: "Hello launch",
+        character_count: 12,
+      }),
+    ]);
+    expect(asset).toMatchObject({
+      id: "asset-1",
+      kind: "text",
+      body: "Hello launch",
+      characterCount: 12,
+    });
+  });
+
   it("enqueues automatic engagement refresh events for stale published targets", async () => {
     process.env.SUPABASE_URL = "https://example.supabase.co";
     process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role";
